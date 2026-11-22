@@ -160,6 +160,8 @@ print('👉 ComfyUI 介面：', url or '（沒拿到網址，看 /content/cloudf
 # 只有在 Hugging Face 撞到流量上限時，才勾選 USE_DRIVE_CACHE：
 #   勾選後會從「我的雲端硬碟/H3_models」複製（比 HF 慢），雲端硬碟沒有的檔案才去 HF 抓並順便存一份。
 USE_DRIVE_CACHE = False  #@param {type:"boolean"}
+#@markdown 加裝 ComfyUI 的 Z-Image Turbo 文生圖模板所需模型（多約 20 GB）。
+INSTALL_Z_IMAGE_TURBO = False  #@param {type:"boolean"}
 from huggingface_hub import hf_hub_download
 import shutil, os
 CACHE = None
@@ -173,6 +175,12 @@ files = [
     ('Comfy-Org/MiniMax-H3', 'vae/minimax_h3_video_vae_int8_convrot.safetensors', 'vae'),
     ('Comfy-Org/MiniMax-H3', 'vae/minimax_h3_audio_vae_fp32.safetensors', 'vae'),
 ]
+if INSTALL_Z_IMAGE_TURBO:
+    files += [('Comfy-Org/Z-Image-Turbo', 'split_files/' + folder + '/' + name, folder) for folder, name in [
+        ('vae', 'ae.safetensors'),
+        ('text_encoders', 'qwen_3_4b.safetensors'),
+        ('diffusion_models', 'z_image_turbo_bf16.safetensors'),
+    ]]
 for repo, name, folder in files:
     target = COMFY / 'models' / folder / Path(name).name
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -403,6 +411,8 @@ USE_DRIVE_CACHE = False  #@param {type:"boolean"}
 INCLUDE_REWRITER = True  #@param {type:"boolean"}
 #@markdown 🖼 加裝生圖（多約 10 GB）：網頁的「圖片」分頁可以文生圖、拿最多 8 張圖做編輯。掛在同一顆 H3 模型上。
 INSTALL_IMAGE = True  #@param {type:"boolean"}
+#@markdown 加裝 ComfyUI 的 Z-Image Turbo 文生圖模板所需模型（多約 20 GB；不是 Toybox 圖片分頁）。
+INSTALL_Z_IMAGE_TURBO = False  #@param {type:"boolean"}
 from huggingface_hub import hf_hub_download
 import shutil, time
 CACHE = None
@@ -431,6 +441,12 @@ files = [  # (repo, 檔案, 放到 models/ 底下的哪裡)
     ('PrunaAI/P-H3-Image-Comfy', 'text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors', 'text_encoders'),
     ('PrunaAI/P-H3-Image-Comfy', 'vae/p-h3-image_vae_int8_convrot.safetensors', 'vae'),
 ] if INSTALL_IMAGE else [])
+if INSTALL_Z_IMAGE_TURBO:
+    files += [('Comfy-Org/Z-Image-Turbo', 'split_files/' + folder + '/' + name, folder) for folder, name in [
+        ('vae', 'ae.safetensors'),
+        ('text_encoders', 'qwen_3_4b.safetensors'),
+        ('diffusion_models', 'z_image_turbo_bf16.safetensors'),
+    ]]
 t0 = time.time()
 for repo, name, folder in files:
     target = COMFY / 'models' / folder / Path(name).name
