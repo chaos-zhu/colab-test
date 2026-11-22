@@ -1075,6 +1075,24 @@ print(f'完成，{(time.time() - t0) / 60:.1f} 分钟；本次共 {len(vids)} �
 display(Video(str(final), embed=True, width=720))
 from google.colab import files; files.download(str(final))
 """),
+    code("""#@title 🎬 查看／下载导演台生成的视频（在 ComfyUI 界面里跑的也在这里）
+#@markdown 导演台用 ffmpeg 直接把视频写到 `output/jzl/<故事名>/`，不经过 ComfyUI 的「媒体资产」面板，所以面板里看不到。
+SHOW_LATEST = 3  #@param {type:"integer"}
+DOWNLOAD = False  #@param {type:"boolean"}
+from IPython.display import Video, display
+from google.colab import files
+vids = sorted((COMFY / 'output' / 'jzl').rglob('*.mp4'), key=lambda f: f.stat().st_mtime, reverse=True)
+log = open('/content/comfyui.log', encoding='utf-8', errors='ignore').read()
+print('\\n'.join(l for l in log.splitlines() if '[JZL-短剧导演台]' in l and any(k in l for k in ('落盘', '成片', '失败', '跳过', '⚠️')))[-3000:]
+      or '（日志里没有导演台的落盘记录）')
+if not vids:
+    print('还没有任何视频：看上面的日志，或跑 🔍')
+for f in vids[:max(1, SHOW_LATEST)]:
+    print(f'{f.relative_to(COMFY / "output")}  {f.stat().st_size / 2**20:.1f} MB')
+    display(Video(str(f), embed=True, width=640))
+    if DOWNLOAD:
+        files.download(str(f))
+"""),
     code("""#@title 🔍 出问题时跑这格：GPU、JZL 加载报告、环境自检、ComfyUI 日志
 import subprocess, sys
 print(subprocess.run(['nvidia-smi'], capture_output=True, text=True).stdout)
