@@ -745,11 +745,30 @@ else:
                 '_orig = ir.cuda_cmake_arguments\\n'
                 f'ir.cuda_cmake_arguments = lambda *a, **k: _orig(*a, **k) + ["-DCMAKE_CUDA_ARCHITECTURES={ARCH}"]\\n'
                 f'sys.exit(ir.main({args!r}))')
-        t0 = time.time()
-        subprocess.run([sys.executable, '-c', code], cwd=str(JZL), check=True,
-                       env=dict(os.environ, PATH='/usr/local/cuda/bin:' + os.environ.get('PATH', '')))
-        if not runtime_ok():
-            raise RuntimeError('llama-server 安装后自检失败，看上面的输出；也可以改选 skip，⑧ 用在线API')
+        import re, sysconfig
+        scripts = sysconfig.get_path('scripts')
+        if LLAMA_BACKEND == 'cuda':
+            # Colab 系统自带 CMake 3.28 偏旧，配 CUDA 13 容易出错 → pip 装一份新版，PATH 里排在系统版前面
+            subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', 'cmake>=3.31.8'], check=True)
+        env = dict(os.environ, PATH=f'{scripts}:/usr/local/cuda/bin:' + os.environ.get('PATH', ''))
+        print('cmake:', subprocess.run(['cmake', '--version'], env=env, capture_output=True, text=True).stdout.split('\\n')[0])
+        # 安装器的输出逐行转进这格（直接 subprocess.run 时 Colab 会吞掉它的报错）；完整日志在 /content/llama_build.log
+        t0, last_pct = time.time(), -10
+        with open('/content/llama_build.log', 'w') as blog:
+            proc = subprocess.Popen([sys.executable, '-u', '-c', code], cwd=str(JZL), env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=1)
+            for line in proc.stdout:
+                blog.write(line)
+                pct = re.match(r'\\[\\s*(\\d+)%\\]', line)
+                if pct and int(pct.group(1)) >= last_pct + 10:   # 编译进度每 10% 显示一次
+                    last_pct = int(pct.group(1)); print(f'  编译进度 {last_pct}%（{(time.time() - t0) / 60:.1f} 分钟）', flush=True)
+                elif not pct and re.search(r'^\\[(INFO|OK|WARN|ERROR)\\]|error|Error|ERROR', line):
+                    print(' ', line.rstrip()[:300], flush=True)
+            proc.wait()
+        if proc.returncode != 0 or not runtime_ok():
+            print('---- llama_build.log 最后 60 行 ----')
+            print(''.join(open('/content/llama_build.log', errors='ignore').readlines()[-60:]))
+            raise RuntimeError('llama-server 编译／安装失败（原因见上面的日志）；可以先把 ② 改选 skip，⑧ 用在线API')
         print(f'编译／安装完成，{(time.time() - t0) / 60:.1f} 分钟')
         if cache:
             shutil.rmtree(cache, ignore_errors=True)
