@@ -2,6 +2,8 @@
 """產生兩本 Colab 筆記本（在 repo 根目錄執行：python tools/build_notebooks.py）
   H3_Basic_ComfyUI.ipynb   基礎：ComfyUI＋H3 模型組，不帶工作流
   H3_Digital_Human.ipynb   數字人：基礎＋工作流＋上傳照片／貼提示詞／生成
+  H3_Toybox.ipynb          H3 Toybox 網頁前端
+  H3_JZL_Nodes.ipynb       基礎＋ ComfyUI-JZL-MiniMax-H3 短劇導演台完整工作流（本地 llama-server＋Qwen3.5-9B）
 筆記本是產物，要改請改這支再重新產生。"""
 import json, io, os
 
@@ -570,10 +572,484 @@ print(open('/content/toybox.log', encoding='utf-8', errors='ignore').read()[-200
 """),
 ]
 
+# ---------------------------------------------------------------- JZL MiniMax H3 节点包
+# ComfyUI＋H3 模型组＋ wjluoxiao/ComfyUI-JZL-MiniMax-H3，开箱即用「短剧导演台」完整链路：
+# 本地 LLM（llama-server＋Qwen3.5-9B）拆解剧本 → 逐段 ref2va 生成 → 拼接成片。
+LLM_REPO = 'unsloth/Qwen3.5-9B-GGUF'
+LLM_FILE, LLM_MMPROJ = 'Qwen3.5-9B-Q4_K_M.gguf', 'mmproj-F16.gguf'
+SAMPLE_STORY = ('雨夜，老城区一间快要打烊的旧书店。年轻店主林夏正在收拾书架，门铃忽然响起，'
+                '一位浑身湿透的白发老人走进来，把一本没有书名的旧书放在柜台上，轻声说：“这本书，三十年前是你外婆卖给我的。”'
+                '林夏翻开扉页，看到外婆熟悉的字迹，眼眶慢慢红了。老人笑着说：“现在，它该回家了。”'
+                '他转身走进雨里，林夏追到门口，街上只剩下路灯和雨声。')
+DIRECTOR_MANAGER = {   # 只写和默认值不同的部分；插件会递归补齐其余键
+    'save': {'mode': '拼接保存', 'auto_merge_delete': False},
+    'assets': {'images': [], 'videos': [], 'audios': []},
+    'enhance': {
+        'llm_backend': '本地模型 [local]', 'force_offload': True, 'enabled': False, 'prompt_lang': '中文 [ZH]',
+        'llm': {'model': LLM_FILE, 'mmproj': LLM_MMPROJ, 'backend': 'llama-server', 'n_ctx': 32768, 'max_tokens': 16384},
+    },
+    'sample_decode': {'steps': 6, 'sampler': 'res_multistep', 'scheduler': 'simple', 'decode_cleanup': '卸载显存模型'},
+}
+DIRECTOR_API = {
+    '1': {'class_type': 'UNETLoader', 'inputs': dict(api['1']['inputs']), '_meta': {'title': '主模型'}},
+    '2': {'class_type': 'CLIPLoader', 'inputs': dict(api['2']['inputs']), '_meta': {'title': 'CLIP'}},
+    '3': {'class_type': 'VAELoader', 'inputs': dict(api['3']['inputs']), '_meta': {'title': '视觉VAE'}},
+    '4': {'class_type': 'VAELoader', 'inputs': dict(api['4']['inputs']), '_meta': {'title': '音频VAE'}},
+    '5': {'class_type': 'BlockSparseAttention', 'inputs': dict(api['59']['inputs'], model=['1', 0]), '_meta': {'title': 'BlockSparseAttention'}},
+    '10': {'class_type': 'JZL_MiniMaxAssetManagerShortDrama', 'inputs': {
+        'run_mode': '🛠️ 故事拆解模式', 'display_info': '', 'aspect_ratio': '16:9 (Widescreen)', 'megapixels': 0.4,
+        'duration': '固定5秒', 'scale_factor': 1.0, 'upscale_scale': 1.0, 'video_count': 3, 'story_style': '',
+        'story_name': 'colab_demo', 'internal_prompt': SAMPLE_STORY,
+        'manager_settings': json.dumps(DIRECTOR_MANAGER, ensure_ascii=False),
+        'model': ['5', 0], 'clip': ['2', 0], 'vae': ['3', 0], 'audio_vae': ['4', 0]},
+        '_meta': {'title': 'JZL - 🤖 MiniMax-H3短剧导演台'}},
+}
+
+JZL = [
+    md("""# MiniMax H3 × ComfyUI-JZL-MiniMax-H3｜Colab 版（短剧导演台，开箱即用）
+
+在 Colab 上跑 [wjluoxiao/ComfyUI-JZL-MiniMax-H3](https://github.com/wjluoxiao/ComfyUI-JZL-MiniMax-H3) 的完整工作流：
+**一段故事（＋可选的角色／场景／道具图）→ 本地 LLM 拆成分镜剧本 → 逐段生成有声视频 → 自动拼接成片**。
+由上往下依序执行。**运行时请选 L4 GPU**（A100 也可以但很耗点数；T4 跑不动 int8 模型）。
+
+| 步骤 | 做什么 | 时间（L4 预估） |
+|---|---|---|
+| ① 检查＋安装 | GPU／驱动不符就停下；通过才装 ComfyUI、节点管理器、JZL 节点包、VideoHelperSuite | 约 1～2 分钟 |
+| ② 本地 LLM 运行时 | 编译 CUDA 版 `llama-server`（只编当前显卡架构）；编好缓存到云端硬盘，下次直接还原 | 首次约 5～15 分钟 |
+| ③ 启动 | 后台启动 ComfyUI，确认 JZL 节点已注册 | 约 1 分钟 |
+| ④ 开界面 | Colab 内置代理（推荐）；④-b 是 cloudflare 备用 | 数秒 |
+| ⑤ 下载模型 | H3 模型组约 37 GB＋ Qwen3.5-9B（GGUF 约 6 GB）＋可选潜空间放大模型 | 数分钟 |
+| ⑥（可选）导入工作流 | 上传自己的 JZL 工作流 JSON，放进左侧清单，并检查缺哪些节点和模型 | — |
+| ⑦（可选）素材 | 上传角色／场景／道具图，设定名称；故事里写名称就会当参考 | — |
+| ⑧ 故事＋设置 | 贴故事、选风格／画幅／每段时长／段数；LLM 用本地或在线 API | — |
+| ⑨ 生成 | 导演台：LLM 拆解 → 逐段生成 → 拼接，完成后播放并下载 | 每 5 秒一段约 2～3 分钟 |
+
+不想等编译：② 选 `skip`，⑧ 的 LLM 改选「在线API」，填 Gemini／OpenAI 兼容端点（DeepSeek、Qwen、GLM、Kimi…）的 Key。
+
+**Hugging Face 令牌（建议）**：左侧栏「🔑 密钥」新增 `HF_TOKEN`（请用**只读**令牌），并开启「笔记本访问权限」。
+
+模型：`Minimax-h3_Singularity_x_10Eros-Max_PRISM`（int8，加速已融合，6 步）＋官方 Qwen3-VL 文本编码器与 VAE；
+LLM：[unsloth/Qwen3.5-9B-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF)（Q4_K_M＋mmproj）。授权依照各来源模型；节点包为 MIT 授权。
+
+最新版：<https://github.com/chaos-zhu/colab-test>"""),
+    code("#@title ① 检查环境＋安装 ComfyUI 与 JZL 节点包（GPU 或驱动不符就停下，不会安装）\nFIX_SRC = " + repr(fix_src) + """
+import torch, shutil, subprocess, sys, os
+from pathlib import Path
+if not torch.cuda.is_available():
+    raise RuntimeError('没有 GPU：请到「运行时 → 更改运行时类型」选 L4 GPU，再重跑这格')
+cap = torch.cuda.get_device_capability(0)
+drv = subprocess.run(['nvidia-smi', '--query-gpu=driver_version', '--format=csv,noheader'], capture_output=True, text=True).stdout.strip()
+print('GPU:', torch.cuda.get_device_name(0), '| capability', cap, '| VRAM', round(torch.cuda.get_device_properties(0).total_memory / 2**30, 1), 'GiB')
+print('驱动:', drv, '| 当前 PyTorch CUDA:', torch.version.cuda, '| 可用磁盘', round(shutil.disk_usage('/content').free / 2**30, 1), 'GiB')
+if cap < (8, 0):
+    raise RuntimeError(f'这张卡（capability {cap}）跑不动 int8 模型，没有安装任何东西。请换 L4（或 A100）再重跑。')
+if int(drv.split('.')[0]) < 580:
+    raise RuntimeError(f'驱动 {drv} 不支持 CUDA 13（需要 580 以上），没有安装任何东西。请换一台运行时（L4）再试。')
+print('✅ 环境检查通过，开始安装')
+# HF 令牌放进环境变量：之后启动的 ComfyUI 与下载都会沿用
+try:
+    from google.colab import userdata
+    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN'); print('已读到 HF_TOKEN')
+except Exception:
+    print('没有设置 HF_TOKEN，之后改用匿名下载（人多时可能被限速）')
+
+def clone(url, dest):
+    if not Path(dest).exists():
+        subprocess.run(['git', 'clone', '--depth', '1', url, str(dest)], check=True)
+    else:
+        subprocess.run(['git', '-C', str(dest), 'pull', '--ff-only'], check=False)
+
+def pip(*args):
+    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', *args], check=True)
+
+COMFY = Path('/content/ComfyUI')
+clone('https://github.com/Comfy-Org/ComfyUI.git', COMFY)   # JZL 需要 ComfyUI ≥ 0.29（官方 H3 支持），直接用最新版
+if not (torch.version.cuda or '').startswith('13'):
+    print('安装 CUDA 13 版 PyTorch（int8 ConvRot 权重需要；torchaudio 一起装，版本不匹配会让 JZL 整包加载失败）…')
+    pip('torch', 'torchvision', 'torchaudio', '--index-url', 'https://download.pytorch.org/whl/cu130')
+pip('-r', str(COMFY / 'requirements.txt'), 'huggingface_hub', 'hf_xet')
+# 节点管理器（ComfyUI-Manager 已并入官方，用 pip 包＋启动参数 --enable-manager）
+if (COMFY / 'manager_requirements.txt').exists():
+    pip('-r', str(COMFY / 'manager_requirements.txt'))
+# JZL 节点包＋ VideoHelperSuite（导演台「💾 视频保存分配」的分段输出接 VHS Video Combine 存 mp4）
+NODES = {
+    'ComfyUI-JZL-MiniMax-H3': 'https://github.com/wjluoxiao/ComfyUI-JZL-MiniMax-H3.git',
+    'ComfyUI-VideoHelperSuite': 'https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git',
+}
+for name, url in NODES.items():
+    d = COMFY / 'custom_nodes' / name
+    clone(url, d)
+    if (d / 'requirements.txt').exists():
+        pip('-r', str(d / 'requirements.txt'))   # JZL：imageio-ffmpeg（分段落盘／合并用）、Pillow、numpy
+JZL = COMFY / 'custom_nodes' / 'ComfyUI-JZL-MiniMax-H3'
+LLM_REPO, LLM_FILE, LLM_MMPROJ = """ + repr(LLM_REPO) + ', ' + repr(LLM_FILE) + ', ' + repr(LLM_MMPROJ) + """   # 导演台的本地 LLM（⑤ 下载）
+# Colab 内置代理（④）会把网址的 %2F 解开，工作流清单点开会 404 → 装一个补路由的小节点
+FIX = COMFY / 'custom_nodes' / 'colab_userdata_slash_fix'
+FIX.mkdir(parents=True, exist_ok=True)
+(FIX / '__init__.py').write_text(FIX_SRC, encoding='utf-8')
+import re
+ver = re.search(r'(?m)^version\\s*=\\s*"([^"]+)"', (JZL / 'pyproject.toml').read_text(encoding='utf-8'))
+print('JZL 节点包版本：', ver.group(1) if ver else '?')
+print('ffmpeg:', shutil.which('ffmpeg') or '没有（会改用 imageio-ffmpeg 自带的）')
+out = subprocess.run([sys.executable, '-c', 'import torch, torchaudio;print(torch.__version__, torch.version.cuda, torchaudio.__version__, torch.cuda.is_available())'],
+                     capture_output=True, text=True)
+print('ComfyUI 会用的 torch / CUDA / torchaudio：', out.stdout.strip(), out.stderr[-300:])
+print('✅ 安装完成')
+"""),
+    code("""#@title ② 本地 LLM 运行时 llama-server（导演台拆解剧本用）
+#@markdown JZL 用 `llama-server` 子进程跑本地 LLM（llama.cpp b10436，跑完即停、释放显存）。Linux 没有 CUDA 预编译包：
+#@markdown - `cuda`（默认）：从源码编译，只编当前显卡的架构；编好缓存到「我的云端硬盘/H3_models/jzl_llama_runtime」，下次直接还原
+#@markdown - `cpu`：下载预编译包即可用，但推理很慢
+#@markdown - `skip`：不装；⑧ 的 LLM 改选「在线API」
+LLAMA_BACKEND = "cuda"  #@param ["cuda", "cpu", "skip"]
+USE_DRIVE_CACHE = True  #@param {type:"boolean"}
+import subprocess, sys, os, shutil, json, time, torch
+ARCH = '%d%d' % torch.cuda.get_device_capability(0)
+RT = JZL / 'runtime' / 'linux-x64' / LLAMA_BACKEND
+RT_CFG = JZL / 'runtime_config.json'   # 插件自带的是作者 Windows 机器的配置，安装后会被覆盖
+
+def runtime_ok():
+    try:
+        c = json.loads(RT_CFG.read_text(encoding='utf-8'))
+        env = dict(os.environ, LD_LIBRARY_PATH=':'.join(str(JZL / d) for d in c.get('library_dirs', [])))
+        r = subprocess.run([str(JZL / c['executable']), '--version'], env=env, capture_output=True, timeout=120)
+        return c.get('platform') == 'linux' and c.get('backend') == LLAMA_BACKEND and r.returncode == 0
+    except Exception:
+        return False
+
+if LLAMA_BACKEND == 'skip':
+    print('跳过本地 LLM 运行时：⑧ 请把 LLM 选成「在线API」')
+elif runtime_ok():
+    print('✅ llama-server 已就绪')
+else:
+    cache = None
+    if USE_DRIVE_CACHE:
+        from google.colab import drive
+        drive.mount('/content/drive')
+        cache = Path('/content/drive/MyDrive/H3_models/jzl_llama_runtime') / (f'cuda_sm{ARCH}' if LLAMA_BACKEND == 'cuda' else 'cpu')
+    if cache and (cache / 'runtime_config.json').is_file():
+        print('从云端硬盘还原 llama-server …')
+        shutil.rmtree(RT, ignore_errors=True)
+        shutil.copytree(cache / 'runtime', RT)
+        shutil.copy(cache / 'runtime_config.json', RT_CFG)
+        for f in RT.rglob('*'):
+            if f.is_file():
+                f.chmod(0o755)   # 云端硬盘不保留执行权限
+    if not runtime_ok():
+        args = ['--backend', LLAMA_BACKEND, '--force']
+        if LLAMA_BACKEND == 'cuda':
+            args += ['--build-from-source', '--jobs', str(os.cpu_count() or 4)]
+            print(f'开始编译 CUDA 版 llama-server（只编 sm_{ARCH}），大约 5～15 分钟…')
+        # 插件默认编 8 种 GPU 架构，Colab 上要很久：包一层，只编当前这张卡
+        code = ('import sys, install_runtime as ir\\n'
+                '_orig = ir.cuda_cmake_arguments\\n'
+                f'ir.cuda_cmake_arguments = lambda *a, **k: _orig(*a, **k) + ["-DCMAKE_CUDA_ARCHITECTURES={ARCH}"]\\n'
+                f'sys.exit(ir.main({args!r}))')
+        t0 = time.time()
+        subprocess.run([sys.executable, '-c', code], cwd=str(JZL), check=True,
+                       env=dict(os.environ, PATH='/usr/local/cuda/bin:' + os.environ.get('PATH', '')))
+        if not runtime_ok():
+            raise RuntimeError('llama-server 安装后自检失败，看上面的输出；也可以改选 skip，⑧ 用在线API')
+        print(f'编译／安装完成，{(time.time() - t0) / 60:.1f} 分钟')
+        if cache:
+            shutil.rmtree(cache, ignore_errors=True)
+            cache.mkdir(parents=True)
+            shutil.copytree(RT, cache / 'runtime')
+            shutil.copy(RT_CFG, cache / 'runtime_config.json')
+            print('已缓存到云端硬盘：', cache)
+    print('✅ llama-server 已就绪')
+"""),
+    code("#@title ③ 启动 ComfyUI（后台运行）＋确认 JZL 节点已注册\nDIRECTOR_API = " + repr(json.dumps(DIRECTOR_API, ensure_ascii=False, indent=1)) + """
+import subprocess, time, urllib.request, sys, json, os
+if 'server' in globals() and server.poll() is None:
+    server.terminate(); server.wait(); print('已关闭旧的 ComfyUI，重新启动')
+# 节点管理器安全等级：normal- ＝可从清单装节点，也可用 Git 网址安装。
+# 这台 Colab 用完即丢；但 HF_TOKEN 在环境变量里，自定义节点读得到 → HF 令牌请用「只读」的。
+cfg = COMFY / 'user' / '__manager' / 'config.ini'
+cfg.parent.mkdir(parents=True, exist_ok=True)
+if not cfg.exists():
+    cfg.write_text('[default]\\nsecurity_level = normal-\\n', encoding='utf-8')
+# --enable-cors-header：走 cloudflare 通道时浏览器 Origin 与 Host 对不上，不开会 403
+# --enable-compress-response-body：节点清单与前端文件压缩后走通道快很多
+# PYTHONUNBUFFERED：让 JZL 的日志立刻写进 comfyui.log（⑨ 靠它显示进度）
+log = open('/content/comfyui.log', 'w')
+server = subprocess.Popen([sys.executable, 'main.py', '--listen', '127.0.0.1', '--port', '8188', '--enable-cors-header', '--enable-manager', '--enable-compress-response-body'],
+                          cwd=str(COMFY), stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, PYTHONUNBUFFERED='1'))
+for i in range(180):
+    try:
+        urllib.request.urlopen('http://127.0.0.1:8188/system_stats', timeout=2)
+        print('ComfyUI 已启动'); break
+    except Exception:
+        time.sleep(2)
+else:
+    print(open('/content/comfyui.log').read()[-3000:])
+    raise RuntimeError('ComfyUI 没有启动成功，看上面的日志')
+text = open('/content/comfyui.log', encoding='utf-8', errors='ignore').read()
+print('\\n'.join(l for l in text.splitlines() if '[JZL MiniMax H3]' in l or 'IMPORT FAILED' in l) or '（日志里没看到 JZL 加载行）')
+OBJECT_INFO = json.loads(urllib.request.urlopen('http://127.0.0.1:8188/object_info').read())
+print(f"已注册 {sum(k.startswith('JZL_') for k in OBJECT_INFO)} 个 JZL 节点")
+if 'JZL_MiniMaxAssetManagerShortDrama' not in OBJECT_INFO:
+    raise RuntimeError('JZL 导演台节点没有注册成功：看上面的 [JZL MiniMax H3] 报告，或跑最下面的 🔍 诊断格')
+
+def combo(node, name):
+    \"\"\"从 /object_info 取下拉选项（兼容 V1 [[...], {}] 与 V3 ['COMBO', {'options': [...]}]）\"\"\"
+    spec = OBJECT_INFO[node]['input'].get('required', {}).get(name) or OBJECT_INFO[node]['input'].get('optional', {}).get(name)
+    return list(spec[0]) if isinstance(spec[0], list) else list(spec[1].get('options', []))
+
+# 完整工作流（API 格式）：故事风格填成插件当前的第一个选项；④ 下载后拖进 ComfyUI 画面即可
+_wf = json.loads(DIRECTOR_API)
+_wf['10']['inputs']['story_style'] = combo('JZL_MiniMaxAssetManagerShortDrama', 'story_style')[0]
+DIRECTOR_API = json.dumps(_wf, ensure_ascii=False, indent=1)
+Path('/content/JZL_H3_short_drama_api.json').write_text(DIRECTOR_API, encoding='utf-8')
+print('✅ JZL 节点包加载正常')
+"""),
+    code("""#@title ④ 打开 ComfyUI 界面（推荐：Colab 内置代理，快、稳、网址不外流）
+# 执行后下面会出现一个链接；显示成 localhost 也没关系，直接点它就会开新标签页。
+# ⚠️ 打开标签页的浏览器必须登录「跟这本 Colab 同一个 Google 账号」；账号不同就改用下一格 ④-b。
+# 下面会下载「短剧导演台」完整工作流（API 格式）：拖进 ComfyUI 画面就是接好线、配好本地 LLM 的导演台，
+# 按 Ctrl+S 存一份就会出现在左侧工作流清单。所有 JZL 节点在节点库「JZL/MiniMax」分类下。
+from google.colab import output, files
+output.serve_kernel_port_as_window(8188)
+files.download('/content/JZL_H3_short_drama_api.json')
+"""),
+    code("""#@title ④-b（备用）用 cloudflare 网址开界面：浏览器登录的 Google 账号和 Colab 不同时用这格
+# ⚠️ 网址没有密码，拿到的人都能用你的 GPU —— 不要贴到公开的地方。
+import subprocess, re, time
+if not Path('/content/cloudflared').exists():
+    subprocess.run(['wget', '-q', '-O', '/content/cloudflared',
+                    'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64'], check=True)
+    subprocess.run(['chmod', '+x', '/content/cloudflared'], check=True)
+# 通道的输出写进文件，不要接 PIPE：PIPE 没人读会塞满，通道就卡住，网页停在加载画面
+if 'tun' in globals() and tun.poll() is None:
+    tun.terminate(); tun.wait()
+open('/content/cloudflared.log', 'w').close()
+tun = subprocess.Popen(['/content/cloudflared', 'tunnel', '--no-autoupdate', '--url', 'http://127.0.0.1:8188'],
+                       stdout=open('/content/cloudflared.log', 'a'), stderr=subprocess.STDOUT)
+url = None
+for i in range(60):
+    time.sleep(1)
+    m = re.search(r'https://[a-z0-9-]+\\.trycloudflare\\.com', open('/content/cloudflared.log').read())
+    if m:
+        url = m.group(0); break
+print('👉 ComfyUI 界面：', url or '（没拿到网址，看 /content/cloudflared.log）')
+"""),
+    code("""#@title ⑤ 下载模型（H3 约 37 GB＋本地 LLM 约 6 GB）
+#@markdown 默认启用云端硬盘缓存：已有模型从「我的云端硬盘/H3_models」复制，缺少的从 Hugging Face 下载并备份。首次使用需授权并预留云端硬盘空间。
+USE_DRIVE_CACHE = True  #@param {type:"boolean"}
+#@markdown 本地 LLM：导演台拆解剧本用（② 选了 skip、只用在线 API 时可以不勾）。
+INCLUDE_LLM = True  #@param {type:"boolean"}
+#@markdown H3 潜空间放大模型（约 0.2 GB）：导演台「二次采样」与「SelfLift 采样」选放大模型时用。
+INCLUDE_LATENT_UPSCALER = True  #@param {type:"boolean"}
+from huggingface_hub import hf_hub_download, get_hf_file_metadata, hf_hub_url
+import shutil, os
+""" + model_cache_src + """
+CACHE = None
+if USE_DRIVE_CACHE:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    CACHE = Path('/content/drive/MyDrive/H3_models'); CACHE.mkdir(parents=True, exist_ok=True)
+files = [
+    ('OliviaRossi/Minimax-h3_Singularity-x-10Eros-Max_PRISM', 'Minimax-h3_Singularity_x_10Eros-Max_PRISM_int8.safetensors', 'diffusion_models'),
+    ('Comfy-Org/MiniMax-H3', 'text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors', 'text_encoders'),
+    ('Comfy-Org/MiniMax-H3', 'vae/minimax_h3_video_vae_int8_convrot.safetensors', 'vae'),
+    ('Comfy-Org/MiniMax-H3', 'vae/minimax_h3_audio_vae_fp32.safetensors', 'vae'),
+]
+if INCLUDE_LATENT_UPSCALER:
+    files.append(('dseditor/minimax-h3-studio-assets', 'latent_upscale_models/minimax_h3_latent_upscaler_3d_fp16_V2.safetensors', 'latent_upscale_models'))
+for repo, name, folder in files:
+    target = COMFY / 'models' / folder / Path(name).name
+    target.parent.mkdir(parents=True, exist_ok=True)
+    cached = CACHE / Path(name).name if CACHE else None
+    ensure_model(repo, name, target, cached)
+    print(folder, target.name, f'{target.stat().st_size / 2**30:.1f} GiB')
+# GGUF 不是 safetensors，用文件大小核对完整性（和 Hugging Face 上的大小一致才算完整）
+if INCLUDE_LLM:
+    for name in (LLM_FILE, LLM_MMPROJ):
+        target = COMFY / 'models' / 'LLM' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        size = get_hf_file_metadata(hf_hub_url(LLM_REPO, name)).size
+        cached = CACHE / 'LLM' / name if CACHE else None
+        if not (target.is_file() and target.stat().st_size == size):
+            if cached and cached.is_file() and cached.stat().st_size == size:
+                print('从云端硬盘还原', name, flush=True); shutil.copy(cached, target)
+            else:
+                got = Path(hf_hub_download(repo_id=LLM_REPO, filename=name, local_dir='/content/hf'))
+                os.replace(got, target)
+        if cached and not (cached.is_file() and cached.stat().st_size == size):
+            print('备份到云端硬盘', name, flush=True); cached.parent.mkdir(exist_ok=True); shutil.copy(target, cached)
+        print('LLM', name, f'{target.stat().st_size / 2**30:.1f} GiB')
+print('✅ 模型就绪；ComfyUI 界面里按 R 刷新模型清单')
+"""),
+    code("""#@title ⑥（可选）上传自己的 JZL 工作流 JSON：放进左侧工作流清单，并检查缺少的节点和模型
+from google.colab import files
+import json, urllib.request
+up = files.upload()
+info = json.loads(urllib.request.urlopen('http://127.0.0.1:8188/object_info').read())
+have = {p.name for p in (COMFY / 'models').rglob('*') if p.is_file()}
+FRONTEND_ONLY = {'Note', 'MarkdownNote', 'Reroute', 'PrimitiveNode'}
+wf_dir = COMFY / 'user' / 'default' / 'workflows'
+wf_dir.mkdir(parents=True, exist_ok=True)
+for i, (fname, data) in enumerate(up.items(), 1):
+    wf = json.loads(data.decode('utf-8'))
+    if 'nodes' in wf:   # 界面格式（含子图）
+        subgraphs = (wf.get('definitions') or {}).get('subgraphs') or []
+        sub_ids = {s.get('id') for s in subgraphs}
+        nodes = wf['nodes'] + [n for s in subgraphs for n in s.get('nodes', [])]
+        types = {n.get('type') for n in nodes} - FRONTEND_ONLY - sub_ids
+        values = [v for n in nodes for v in (n.get('widgets_values') or []) if isinstance(v, str)]
+        safe = ''.join(c if c.isascii() and (c.isalnum() or c in '._-') else '_' for c in Path(fname).stem)   # 英文文件名，避免代理上的网址编码问题
+        safe = (safe if any(c.isalnum() for c in safe) else f'jzl_workflow_{i}') + '.json'
+        (wf_dir / safe).write_bytes(data)
+        print(f'📂 {fname} → 左侧工作流清单：{safe}（刷新页面后可见）')
+    else:               # API 格式：清单只认界面格式，直接拖进画面即可
+        types = {n.get('class_type') for n in wf.values() if isinstance(n, dict)}
+        values = [v for n in wf.values() if isinstance(n, dict) for v in (n.get('inputs') or {}).values() if isinstance(v, str)]
+        print(f'📄 {fname} 是 API 格式：请直接拖进 ComfyUI 画面')
+    missing = sorted(t for t in types if t and t not in info)
+    print('  ❌ 缺少节点：' + '、'.join(missing) + '\\n     → 在界面「节点管理器 → 安装缺少的节点」安装后，重跑 ③' if missing else '  ✅ 节点都在')
+    models = {Path(v.replace('\\\\', '/')).name for v in values if v.lower().endswith(('.safetensors', '.gguf', '.ckpt', '.pth'))}
+    lack = sorted(m for m in models if m not in have)
+    print('  ❌ 缺少模型：' + '、'.join(lack) + '\\n     → 换成 ⑤ 已下载的同类模型，或自行下载到 models/ 对应文件夹' if lack else '  ✅ 引用的模型都在')
+"""),
+    code("""#@title ⑦（可选）上传参考素材：角色／场景／道具图片
+#@markdown 上传后在下方表格设定类型和名称（文件名以「角色_」「场景_」「道具_」开头会自动带入）；
+#@markdown ⑧ 的故事里写到这个名称，LLM 拆解时就会把图当参考（也可以写 `@名称` 强制引用）。不上传就是纯文本生成。可重复执行追加素材。
+CLEAR_ASSETS = False  #@param {type:"boolean"}
+from google.colab import files
+import ipywidgets as W
+from IPython.display import display
+ASSET_DIR = COMFY / 'input' / 'jzl' / 'colab'
+ASSET_DIR.mkdir(parents=True, exist_ok=True)
+if CLEAR_ASSETS or 'asset_rows' not in globals():
+    asset_rows = []
+for fname, data in files.upload().items():
+    (ASSET_DIR / fname).write_bytes(data)
+    stem = Path(fname).stem
+    typ = next((t for t in ('角色', '场景', '道具') if stem.startswith(t)), '角色')
+    name = stem[len(typ):].lstrip('_- ') if stem.startswith(typ) else stem
+    asset_rows.append(dict(path=f'jzl/colab/{fname}', data=data,
+        on=W.Checkbox(value=True, indent=False, layout=W.Layout(width='30px')),
+        type=W.Dropdown(options=['角色', '场景', '道具'], value=typ, layout=W.Layout(width='80px')),
+        name=W.Text(value=name or stem, placeholder='名称（故事里用这个名字）', layout=W.Layout(width='200px')),
+        desc=W.Text(placeholder='详细描述（可选，帮助 LLM 理解这张图）', layout=W.Layout(width='420px'))))
+display(W.VBox([W.HBox([W.Image(value=r['data'], width=72), r['on'], r['type'], r['name'], r['desc']]) for r in asset_rows]
+               or [W.HTML('（没有素材：纯文本生成）')]))
+"""),
+    code("#@title ⑧ 故事＋设置（执行后下方出现表单；改完不用重跑，直接执行 ⑨）\n"
+         "import ipywidgets as W\n"
+         "from IPython.display import display\n"
+         "SAMPLE_STORY = " + repr(SAMPLE_STORY) + "\n"
+         """N = 'JZL_MiniMaxAssetManagerShortDrama'
+def _keep(name, default):   # 重跑这格不会清掉已填的内容
+    return globals()[name].value if name in globals() else default
+L = W.Layout(width='460px'); S = {'description_width': '120px'}
+story_box = W.Textarea(value=_keep('story_box', SAMPLE_STORY), placeholder='用自然语言写故事／剧本（不要贴已拆解的 [SHOT_START] 提示词）',
+                       layout=W.Layout(width='100%', height='220px'))
+run_box = W.Dropdown(options=combo(N, 'run_mode'), value=_keep('run_box', combo(N, 'run_mode')[0]), description='运行模式', layout=L, style=S)
+style_box = W.Dropdown(options=combo(N, 'story_style'), value=_keep('style_box', combo(N, 'story_style')[0]), description='故事风格', layout=L, style=S)
+name_box = W.Text(value=_keep('name_box', 'colab_demo'), description='故事名称', layout=L, style=S)
+ar_box = W.Dropdown(options=combo(N, 'aspect_ratio'), value=_keep('ar_box', '16:9 (Widescreen)'), description='画幅比例', layout=L, style=S)
+mp_box = W.FloatText(value=_keep('mp_box', 0.4), description='百万像素（MP）', layout=L, style=S)
+dur_box = W.Dropdown(options=combo(N, 'duration'), value=_keep('dur_box', '固定5秒'), description='每段时长', layout=L, style=S)
+cnt_box = W.IntText(value=_keep('cnt_box', 3), description='段数（0=剧情决定）', layout=L, style=S)
+scale_box = W.FloatSlider(value=_keep('scale_box', 1.0), min=1.0, max=5.0, step=0.1, description='参考图放大', layout=L, style=S)
+lang_box = W.Dropdown(options=['中文 [ZH]', '英文 [EN]'], value=_keep('lang_box', '中文 [ZH]'), description='提示词语言', layout=L, style=S)
+enh_box = W.Checkbox(value=_keep('enh_box', False), description='提示词增强（LLM 再润色每段，耗时约翻倍）', indent=False)
+steps_box = W.IntText(value=_keep('steps_box', 6), description='采样步数', layout=L, style=S)
+seed_box = W.IntText(value=_keep('seed_box', -1), description='seed（-1 随机）', layout=L, style=S)
+_local_ok = (COMFY / 'models' / 'LLM' / LLM_FILE).is_file() and globals().get('LLAMA_BACKEND', 'skip') != 'skip'
+llm_box = W.ToggleButtons(options=['本地模型 [local]', '在线API [api]'], value=_keep('llm_box', '本地模型 [local]' if _local_ok else '在线API [api]'), description='LLM', style=S)
+api_provider = W.Dropdown(options=['OpenAI 兼容 (OpenAI/DeepSeek/Qwen/GLM/Kimi/Ollama/vLLM/LM Studio)', 'Anthropic', 'Google Gemini'],
+                          value=_keep('api_provider', 'OpenAI 兼容 (OpenAI/DeepSeek/Qwen/GLM/Kimi/Ollama/vLLM/LM Studio)'), description='API 类型', layout=L, style=S)
+api_model = W.Text(value=_keep('api_model', 'deepseek-chat'), description='模型名', layout=L, style=S)
+api_base = W.Text(value=_keep('api_base', 'https://api.deepseek.com'), description='Base URL', layout=L, style=S)
+api_key = W.Password(value=_keep('api_key', ''), description='API Key', layout=L, style=S)
+api_panel = W.VBox([api_provider, api_model, api_base, api_key])
+def _toggle(change=None):
+    api_panel.layout.display = '' if llm_box.value.startswith('在线') else 'none'
+llm_box.observe(_toggle, names='value'); _toggle()
+display(W.VBox([W.HTML('<b>故事／剧本</b>'), story_box,
+                W.HBox([W.VBox([run_box, style_box, name_box, ar_box, mp_box, dur_box]),
+                        W.VBox([cnt_box, scale_box, lang_box, steps_box, seed_box, enh_box])]),
+                llm_box, api_panel]))
+"""),
+    code("""#@title ⑨ 生成：短剧导演台（LLM 拆解 → 逐段生成 → 拼接成片）
+import json, random, time, urllib.request
+from IPython.display import Video, display
+p = json.loads(DIRECTOR_API)
+d = p['10']['inputs']
+m = json.loads(d['manager_settings'])
+story = story_box.value.strip()
+assert story, '⑧ 的故事是空的'
+local = llm_box.value.startswith('本地')
+if local and not (COMFY / 'models' / 'LLM' / LLM_FILE).is_file():
+    raise RuntimeError('本地 LLM 模型还没下载：跑 ⑤（勾 INCLUDE_LLM），或在 ⑧ 改用在线API')
+if local and globals().get('LLAMA_BACKEND', 'skip') == 'skip':
+    raise RuntimeError('② 选了 skip，没有 llama-server：回 ② 选 cuda／cpu 再跑，或在 ⑧ 改用在线API')
+if not local and not api_key.value.strip():
+    raise RuntimeError('⑧ 选了在线API，但 API Key 是空的')
+d.update(run_mode=run_box.value, story_style=style_box.value, story_name=name_box.value.strip() or 'colab_demo',
+         aspect_ratio=ar_box.value, megapixels=float(mp_box.value), duration=dur_box.value,
+         video_count=max(0, min(60, int(cnt_box.value))), scale_factor=float(scale_box.value), internal_prompt=story)
+m['enhance'].update(llm_backend=llm_box.value, enabled=bool(enh_box.value), prompt_lang=lang_box.value)
+m['enhance']['api'] = {'provider': api_provider.value, 'model': api_model.value.strip(), 'api_key': api_key.value.strip(),
+                       'base_url': api_base.value.strip(), 'temperature': 0.6, 'max_tokens': 81920, 'thinking': 'disabled'}
+m['sample_decode'].update(steps=int(steps_box.value), seed=max(0, int(seed_box.value)),
+                          seed_mode='fixed' if seed_box.value >= 0 else 'randomize')
+m['assets']['images'] = [{'type': r['type'].value, 'name': r['name'].value.strip(), 'description': r['desc'].value.strip(),
+                          'path': r['path'], 'enabled': True}
+                         for r in globals().get('asset_rows', []) if r['on'].value and r['name'].value.strip()]
+d['manager_settings'] = json.dumps(m, ensure_ascii=False)
+print('素材：', '、'.join(f"{a['type']}「{a['name']}」" for a in m['assets']['images']) or '无（纯文本生成）')
+print('LLM：', f'本地 {LLM_FILE}（llama-server）' if local else f'{api_provider.value.split(" ")[0]} / {api_model.value}')
+req = urllib.request.Request('http://127.0.0.1:8188/prompt', data=json.dumps({'prompt': p}).encode(),
+                             headers={'Content-Type': 'application/json'})
+try:
+    pid = json.loads(urllib.request.urlopen(req).read())['prompt_id']
+except urllib.error.HTTPError as e:
+    raise RuntimeError(e.read().decode()[:3000])
+t0 = time.time()
+logf = open('/content/comfyui.log', encoding='utf-8', errors='ignore'); logf.seek(0, 2)
+print('已送出，以下是导演台的实时日志：')
+while True:
+    time.sleep(5)
+    for line in logf.read().splitlines():
+        if '[JZL' in line or 'Traceback' in line or 'Error' in line:
+            print(' ', line[:300])
+    h = json.loads(urllib.request.urlopen('http://127.0.0.1:8188/history/' + pid).read())
+    if pid in h:
+        st = h[pid]['status']
+        if st.get('status_str') == 'error':
+            print(json.dumps(st, ensure_ascii=False)[:3000]); raise RuntimeError('生成失败，看上面的日志或跑 🔍')
+        break
+vids = sorted((f for f in (COMFY / 'output' / 'jzl').rglob('*.mp4') if f.stat().st_mtime > t0), key=lambda f: f.stat().st_mtime)
+if not vids:
+    raise RuntimeError('这次没有产出视频：看上面的 [JZL-短剧导演台] 日志（运行模式选了「仅提示词／扩写」时本来就不出片）')
+final = next((f for f in reversed(vids) if '合并' in f.name), vids[-1])
+print(f'完成，{(time.time() - t0) / 60:.1f} 分钟；本次共 {len(vids)} 个视频，成片：', final)
+display(Video(str(final), embed=True, width=720))
+from google.colab import files; files.download(str(final))
+"""),
+    code("""#@title 🔍 出问题时跑这格：GPU、JZL 加载报告、环境自检、ComfyUI 日志
+import subprocess, sys
+print(subprocess.run(['nvidia-smi'], capture_output=True, text=True).stdout)
+log = open('/content/comfyui.log', encoding='utf-8', errors='ignore').read()
+print('---- JZL 日志 ----')
+print('\\n'.join(l for l in log.splitlines() if '[JZL' in l)[-4000:] or '（没有 JZL 日志）')
+print('---- JZL 环境自检（ffmpeg / PyAV / 输出目录 / 显卡）----')
+r = subprocess.run([sys.executable, str(JZL / 'jzl_diagnose.py')], cwd=str(COMFY), capture_output=True, text=True)
+print((r.stdout + r.stderr)[-4000:])
+print('---- ComfyUI 日志（错误相关）----')
+keys = ('error', 'Error', 'Traceback', 'IMPORT FAILED', 'out of memory', 'Prompt executed')
+print('\\n'.join(l for l in log.splitlines() if any(k in l for k in keys))[-4000:])
+"""),
+]
+
 NOTEBOOKS = {
     'H3_Digital_Human.ipynb': cells,
     'H3_Basic_ComfyUI.ipynb': [HEAD_BASIC, cells[1], C2_BASIC, C3_BASIC, cells[4], cells[5], cells[9]],
     'H3_Toybox.ipynb': TOYBOX,
+    'H3_JZL_Nodes.ipynb': JZL,
 }
 for fname, cs in NOTEBOOKS.items():
     nb = {'cells': cs,

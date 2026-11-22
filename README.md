@@ -8,6 +8,7 @@
 | **H3_Basic_ComfyUI** | 基礎學習：裝好 ComfyUI＋H3 模型組，**不帶工作流**，自己拉節點 | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Basic_ComfyUI.ipynb) |
 | **H3_Digital_Human** | 數字人：一張人物照＋一段提示詞 → 會說話的影片；也可以交給桌面版 AI 用 skill 生成 | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Digital_Human.ipynb) |
 | **H3_Toybox** 🧸 | 可愛的網頁前端：參考生成／頭尾格／純文字／延伸影片＋提示詞改寫與剩餘時間；🖼 **選用的圖片分頁**（P-H3-Image 掛在同一顆 H3 上：文生圖、最多 8 張圖編輯，多約 10 GB）；🤖 短片 Agent（Gemini）。只開網頁，不用碰 ComfyUI 介面（約 50 GB 模型，加生圖約 60 GB） | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Toybox.ipynb) |
+| **H3_JZL_Nodes** | 基礎版＋ [ComfyUI-JZL-MiniMax-H3](https://github.com/wjluoxiao/ComfyUI-JZL-MiniMax-H3) 節點包（參考編碼、短劇導演台、人物替換…）：開箱即用的**短劇導演台**完整工作流：一段故事＋可選角色圖 → 本地 LLM（llama-server＋Qwen3.5-9B）拆分鏡 → 逐段生成 → 拼接成片；也可上傳自己的工作流自動檢查缺少的節點／模型（約 43 GB 模型） | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_JZL_Nodes.ipynb) |
 
 > 一律從上面的按鈕開啟：筆記本改版只要更新這個 repo，按鈕永遠開到最新版，不必再傳新的分享網址。
 
@@ -103,6 +104,17 @@ ComfyUI 確認正常之後才下載，避免裝壞了還白抓 37 GB。
 - 官方提示詞指南不隨本 repo 散布，② 會從 MiniMax 官方 repo 下載到 `toybox/guides/`。
 - 本機版在 Windows 用 ComfyUI 內嵌 Python 直接跑 `toybox/server.py`；`config.json` 指定 ComfyUI 網址與 input 資料夾。
 
+## JZL 節點包：`H3_JZL_Nodes.ipynb`
+
+開箱即用「短劇導演台」完整鏈路：一段故事（＋可選角色／場景／道具圖）→ 本地 LLM 拆成分鏡劇本 → 逐段 ref2va 生成 → 自動拼接成片。
+
+- ① 安裝 ComfyUI、[ComfyUI-JZL-MiniMax-H3](https://github.com/wjluoxiao/ComfyUI-JZL-MiniMax-H3)、VideoHelperSuite；③ 啟動後讀 `/object_info` 確認 `JZL_*` 節點已註冊，失敗就停下並印出插件的載入報告。
+- ② 預設 `cuda`：導演台的本地 LLM 走 `llama-server`，Linux 沒有 CUDA 預編譯包，用插件的 `install_runtime.py --build-from-source` 編譯，並只編當前顯卡架構（`-DCMAKE_CUDA_ARCHITECTURES`）；編好備份到「我的雲端硬碟/H3_models/jzl_llama_runtime」，下次直接還原。選 `skip` 則 ⑧ 改用線上 API。
+- ⑤ 除了 H3 模型組，另下載 [unsloth/Qwen3.5-9B-GGUF](https://huggingface.co/unsloth/Qwen3.5-9B-GGUF) 的 `Q4_K_M`＋`mmproj-F16`（約 6 GB，同樣走雲端硬碟快取）。
+- ④ 會下載導演台完整工作流（API 格式，已接好模型、配好本地 LLM），拖進 ComfyUI 畫面即可，Ctrl+S 存進清單。
+- ⑥ 上傳自己的工作流 JSON：介面格式放進左側清單，並列出缺少的節點與模型。
+- ⑦ 上傳素材（檔名 `角色_名字.png` 會自動帶入類型與名稱）→ ⑧ 表單填故事、風格、畫幅、每段時長、段數、LLM（本地／線上 API）→ ⑨ 送出，顯示即時日誌，完成後播放並下載拼接成片。
+
 ---
 
 ## 模型
@@ -127,7 +139,7 @@ ComfyUI 確認正常之後才下載，避免裝壞了還白抓 37 GB。
 
 ## 給維護者
 
-三本筆記本由 `tools/build_notebooks.py` 產生，**不要直接改 ipynb**：
+四本筆記本由 `tools/build_notebooks.py` 產生，**不要直接改 ipynb**：
 
 ```bash
 python tools/build_notebooks.py
