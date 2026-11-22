@@ -58,7 +58,7 @@ ComfyUI 確認正常之後才下載，避免裝壞了還白抓 37 GB。
 
 ![下載模型](docs/images/04_download_models.png)
 
-`USE_DRIVE_CACHE` 預設不勾：直接從 Hugging Face 下載最快。只有撞到 HF 流量上限時才勾選，改從「我的雲端硬碟/H3_models」複製（第一次會順便存一份）。
+`USE_DRIVE_CACHE` 預設勾選：從「我的雲端硬碟/H3_models」複製已有模型；缺少的模型從 Hugging Face 下載後備份到雲端硬碟，供下次使用。首次使用需要授權，並預留足夠的雲端硬碟空間。不需要快取時可取消勾選。
 
 想在 ComfyUI 使用 **Z-Image Turbo 文生圖模板**，可勾選下載模型那格的 `INSTALL_Z_IMAGE_TURBO`（預設關閉，需多約 20 GB）。三個模型會直接存到 Colab 的 ComfyUI 模型資料夾；下載完成後刷新 ComfyUI 頁面。Toybox 筆記本的選項在 ②，它供 ComfyUI 模板使用，與 Toybox 的圖片分頁分開。
 

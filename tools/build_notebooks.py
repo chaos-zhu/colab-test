@@ -157,10 +157,8 @@ for i in range(60):
 print('👉 ComfyUI 介面：', url or '（沒拿到網址，看 /content/cloudflared.log）')
 """),
     code("""#@title ④ 下載模型（約 37 GB）
-# 預設直接從 Hugging Face 下載（最快）。HF 權杖已在 ① 讀入。
-# 只有在 Hugging Face 撞到流量上限時，才勾選 USE_DRIVE_CACHE：
-#   勾選後會從「我的雲端硬碟/H3_models」複製（比 HF 慢），雲端硬碟沒有的檔案才去 HF 抓並順便存一份。
-USE_DRIVE_CACHE = False  #@param {type:"boolean"}
+#@markdown 預設啟用雲端硬碟快取：已有模型從「我的雲端硬碟/H3_models」複製，缺少的模型從 Hugging Face 下載並備份。首次使用需授權並預留雲端硬碟空間。
+USE_DRIVE_CACHE = True  #@param {type:"boolean"}
 #@markdown 加裝 ComfyUI 的 Z-Image Turbo 文生圖模板所需模型（多約 20 GB）。
 INSTALL_Z_IMAGE_TURBO = False  #@param {type:"boolean"}
 from huggingface_hub import hf_hub_download
@@ -398,10 +396,8 @@ print('ComfyUI 會用的 PyTorch：', out.stdout.strip(), out.stderr[-300:])
 print('✅ 安裝完成')
 """),
     code("""#@title ② 下載模型（約 50 GB）
-# 預設直接從 Hugging Face 下載（最快）。HF 權杖已在 ① 讀入。
-# 只有在 Hugging Face 撞到流量上限時，才勾選 USE_DRIVE_CACHE：
-#   勾選後會從「我的雲端硬碟/H3_models」複製（比 HF 慢），雲端硬碟沒有的檔案才去 HF 抓並順便存一份。
-USE_DRIVE_CACHE = False  #@param {type:"boolean"}
+#@markdown 預設啟用雲端硬碟快取：已有模型從「我的雲端硬碟/H3_models」複製，缺少的模型從 Hugging Face 下載並備份。首次使用需授權並預留雲端硬碟空間。
+USE_DRIVE_CACHE = True  #@param {type:"boolean"}
 #@markdown 不勾就少下載 7 GB：網頁的本地改寫會關掉，可以到 ⚙ 設定改用 Gemini 或 OpenAI 端點改寫。
 INCLUDE_REWRITER = True  #@param {type:"boolean"}
 #@markdown 🖼 加裝生圖（多約 10 GB）：網頁的「圖片」分頁可以文生圖、拿最多 8 張圖做編輯。掛在同一顆 H3 模型上。
