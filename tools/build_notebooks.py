@@ -708,25 +708,33 @@ ARCH = '%d%d' % torch.cuda.get_device_capability(0)
 RT = JZL / 'runtime' / 'linux-x64' / LLAMA_BACKEND
 RT_CFG = JZL / 'runtime_config.json'   # 插件自带的是作者 Windows 机器的配置，安装后会被覆盖
 
-def runtime_ok():
+def runtime_ok(verbose=False):
     try:
         c = json.loads(RT_CFG.read_text(encoding='utf-8'))
-        env = dict(os.environ, LD_LIBRARY_PATH=':'.join(str(JZL / d) for d in c.get('library_dirs', [])))
-        r = subprocess.run([str(JZL / c['executable']), '--version'], env=env, capture_output=True, timeout=120)
-        return c.get('platform') == 'linux' and c.get('backend') == LLAMA_BACKEND and r.returncode == 0
-    except Exception:
+        if c.get('platform') != 'linux' or c.get('backend') != LLAMA_BACKEND:
+            return False
+        # 和插件一样把运行时目录「加在前面」：Colab 的 GPU 驱动（libcuda.so）靠原有的 LD_LIBRARY_PATH 才找得到
+        libs = ':'.join(str(JZL / d) for d in c.get('library_dirs', []))
+        env = dict(os.environ, LD_LIBRARY_PATH=libs + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
+        r = subprocess.run([str(JZL / c['executable']), '--version'], env=env, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0 and verbose:
+            print('llama-server --version 失败：', (r.stdout + r.stderr)[-2000:])
+        return r.returncode == 0
+    except Exception as e:
+        if verbose:
+            print('llama-server 自检出错：', e)
         return False
 
+cache = None
+if LLAMA_BACKEND != 'skip' and USE_DRIVE_CACHE:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    cache = Path('/content/drive/MyDrive/H3_models/jzl_llama_runtime') / (f'cuda_sm{ARCH}' if LLAMA_BACKEND == 'cuda' else 'cpu')
 if LLAMA_BACKEND == 'skip':
     print('跳过本地 LLM 运行时：⑧ 请把 LLM 选成「在线API」')
 elif runtime_ok():
-    print('✅ llama-server 已就绪')
+    print('llama-server 已安装')
 else:
-    cache = None
-    if USE_DRIVE_CACHE:
-        from google.colab import drive
-        drive.mount('/content/drive')
-        cache = Path('/content/drive/MyDrive/H3_models/jzl_llama_runtime') / (f'cuda_sm{ARCH}' if LLAMA_BACKEND == 'cuda' else 'cpu')
     if cache and (cache / 'runtime_config.json').is_file():
         print('从云端硬盘还原 llama-server …')
         shutil.rmtree(RT, ignore_errors=True)
@@ -740,10 +748,20 @@ else:
         if LLAMA_BACKEND == 'cuda':
             args += ['--build-from-source', '--jobs', str(os.cpu_count() or 4)]
             print(f'开始编译 CUDA 版 llama-server（只编 sm_{ARCH}），大约 5～15 分钟…')
-        # 插件默认编 8 种 GPU 架构，Colab 上要很久：包一层，只编当前这张卡
-        code = ('import sys, install_runtime as ir\\n'
+        # 给插件安装器打两个补丁再运行：
+        #  1. 插件默认编 8 种 GPU 架构，Colab 上要很久 → 只编当前这张卡
+        #  2. llama-server 内嵌的网页聊天界面：构建时会从 HF bucket 下载资源，资源不全时 llama-ui-embed 校验失败、整个编译中断。
+        #     JZL 只用它的 API → 关掉下载（LLAMA_USE_PREBUILT_UI=OFF）并清掉源码里残留的 tools/ui/dist，
+        #     llama-ui-embed 拿不到资源目录时会生成空资源表（官方支持的「不带网页界面」构建）
+        code = ('import sys, shutil, install_runtime as ir\\n'
                 '_orig = ir.cuda_cmake_arguments\\n'
-                f'ir.cuda_cmake_arguments = lambda *a, **k: _orig(*a, **k) + ["-DCMAKE_CUDA_ARCHITECTURES={ARCH}"]\\n'
+                f'ir.cuda_cmake_arguments = lambda *a, **k: _orig(*a, **k) + ["-DCMAKE_CUDA_ARCHITECTURES={ARCH}", "-DLLAMA_USE_PREBUILT_UI=OFF", "-DLLAMA_BUILD_UI=OFF"]\\n'
+                '_prep = ir.prepare_source_checkout\\n'
+                'def _prep_no_ui(*a, **k):\\n'
+                '    src = _prep(*a, **k)\\n'
+                '    shutil.rmtree(src / "tools" / "ui" / "dist", ignore_errors=True)\\n'
+                '    return src\\n'
+                'ir.prepare_source_checkout = _prep_no_ui\\n'
                 f'sys.exit(ir.main({args!r}))')
         import re, sysconfig
         scripts = sysconfig.get_path('scripts')
@@ -765,17 +783,22 @@ else:
                 elif not pct and re.search(r'^\\[(INFO|OK|WARN|ERROR)\\]|error|Error|ERROR', line):
                     print(' ', line.rstrip()[:300], flush=True)
             proc.wait()
-        if proc.returncode != 0 or not runtime_ok():
+        if proc.returncode != 0 or not runtime_ok(verbose=True):
+            lines = open('/content/llama_build.log', errors='ignore').readlines()
+            print('---- 关键行（CMake 报错／UI 资源）----')
+            print(''.join(l for l in lines if re.search(r'CMake Error|UI:|embed:|missing required|error:|fatal', l))[-6000:])
             print('---- llama_build.log 最后 60 行 ----')
-            print(''.join(open('/content/llama_build.log', errors='ignore').readlines()[-60:]))
+            print(''.join(lines[-60:]))
             raise RuntimeError('llama-server 编译／安装失败（原因见上面的日志）；可以先把 ② 改选 skip，⑧ 用在线API')
         print(f'编译／安装完成，{(time.time() - t0) / 60:.1f} 分钟')
-        if cache:
-            shutil.rmtree(cache, ignore_errors=True)
-            cache.mkdir(parents=True)
-            shutil.copytree(RT, cache / 'runtime')
-            shutil.copy(RT_CFG, cache / 'runtime_config.json')
-            print('已缓存到云端硬盘：', cache)
+# 云端硬盘里还没有这份运行时就备份（包括「本次运行时里已经编好、但还没缓存」的情况）
+if LLAMA_BACKEND != 'skip':
+    if cache and not (cache / 'runtime_config.json').is_file():
+        shutil.rmtree(cache, ignore_errors=True)
+        cache.mkdir(parents=True)
+        shutil.copytree(RT, cache / 'runtime')
+        shutil.copy(RT_CFG, cache / 'runtime_config.json')   # 最后写配置：它在 = 缓存完整
+        print('已缓存到云端硬盘，下次直接还原：', cache)
     print('✅ llama-server 已就绪')
 """),
     code("#@title ③ 启动 ComfyUI（后台运行）＋确认 JZL 节点已注册\nDIRECTOR_API = " + repr(json.dumps(DIRECTOR_API, ensure_ascii=False, indent=1)) + """
