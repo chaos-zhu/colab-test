@@ -6,7 +6,7 @@ description: 用一張人物照＋一句中文需求，自動在使用者已開�
 # H3 數字人：一張照片＋一句話 → 會說話的影片
 
 ## 使用者要先做的事（AI 做不到，請提醒）
-1. 從 <https://github.com/dseditor/minimax-h3-colab> 開啟 `H3_Basic_ComfyUI.ipynb`（或 `H3_Digital_Human.ipynb`），執行階段選 **L4**。
+1. 從 <https://github.com/chaos-zhu/colab-test> 開啟 `H3_Basic_ComfyUI.ipynb`（或 `H3_Digital_Human.ipynb`），執行階段選 **L4**。
 2. 依序執行 **①、②、③-b、④**，把 ③-b 印出來的 `https://….trycloudflare.com` 網址交給你。
    （③ 的 Colab 內建代理只有使用者本人的瀏覽器打得開，AI 用不了，一定要用 ③-b。）
 3. 給你：**人物照的檔案路徑**、**一句中文需求**（說什麼、什麼語氣、幾秒；沒給秒數就用 10 秒）。
