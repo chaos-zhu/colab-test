@@ -576,7 +576,7 @@ print(open('/content/toybox.log', encoding='utf-8', errors='ignore').read()[-200
 # ComfyUI＋H3 模型组＋ wjluoxiao/ComfyUI-JZL-MiniMax-H3，开箱即用「短剧导演台」完整链路：
 # 本地 LLM（llama-server＋Qwen3.5-9B）拆解剧本 → 逐段 ref2va 生成 → 拼接成片。
 LLM_REPO = 'unsloth/Qwen3.5-9B-GGUF'
-LLM_FILE, LLM_MMPROJ = 'Qwen3.5-9B-Q4_K_M.gguf', 'mmproj-F16.gguf'
+LLM_FILE, LLM_MMPROJ, LLM_CHAT_HANDLER = 'Qwen3.5-9B-Q4_K_M.gguf', 'mmproj-F16.gguf', 'Qwen3.5'
 SAMPLE_STORY = ('雨夜，老城区一间快要打烊的旧书店。年轻店主林夏正在收拾书架，门铃忽然响起，'
                 '一位浑身湿透的白发老人走进来，把一本没有书名的旧书放在柜台上，轻声说：“这本书，三十年前是你外婆卖给我的。”'
                 '林夏翻开扉页，看到外婆熟悉的字迹，眼眶慢慢红了。老人笑着说：“现在，它该回家了。”'
@@ -586,7 +586,10 @@ DIRECTOR_MANAGER = {   # 只写和默认值不同的部分；插件会递归补�
     'assets': {'images': [], 'videos': [], 'audios': []},
     'enhance': {
         'llm_backend': '本地模型 [local]', 'force_offload': True, 'enabled': False, 'prompt_lang': '中文 [ZH]',
-        'llm': {'model': LLM_FILE, 'mmproj': LLM_MMPROJ, 'backend': 'llama-server', 'n_ctx': 32768, 'max_tokens': 16384},
+        # 加载 mmproj（视觉模块）时插件要求 chat_handler 不能是 None；llama-server 下它只是「启用视觉」的开关，
+        # 选和模型对应的非思考版（Thinking 版会先长篇推理，拆解剧本慢很多）
+        'llm': {'model': LLM_FILE, 'mmproj': LLM_MMPROJ, 'chat_handler': LLM_CHAT_HANDLER, 'backend': 'llama-server',
+                'n_ctx': 32768, 'max_tokens': 16384},
     },
     'sample_decode': {'steps': 6, 'sampler': 'res_multistep', 'scheduler': 'simple', 'decode_cleanup': '卸载显存模型'},
 }
