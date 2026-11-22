@@ -9,6 +9,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
 api = json.load(io.open('workflows/H3_digital_human_api.json', encoding='utf-8'))
 fix_src = io.open('tools/userdata_slash_fix.py', encoding='utf-8').read()
+model_cache_src = io.open('tools/model_cache.py', encoding='utf-8').read()
 ui_wf = io.open('workflows/H3_digital_human.json', encoding='utf-8').read()
 sample_prompt = api['7']['inputs']['prompt']
 api['7']['inputs']['prompt'] = ''
@@ -164,6 +165,7 @@ USE_DRIVE_CACHE = False  #@param {type:"boolean"}
 INSTALL_Z_IMAGE_TURBO = False  #@param {type:"boolean"}
 from huggingface_hub import hf_hub_download
 import shutil, os
+""" + model_cache_src + """
 CACHE = None
 if USE_DRIVE_CACHE:
     from google.colab import drive
@@ -185,14 +187,7 @@ for repo, name, folder in files:
     target = COMFY / 'models' / folder / Path(name).name
     target.parent.mkdir(parents=True, exist_ok=True)
     cached = CACHE / Path(name).name if CACHE else None
-    if not target.is_file():
-        if cached and cached.is_file():
-            print('從雲端硬碟複製', cached.name); shutil.copy(str(cached), str(target))
-        else:
-            got = Path(hf_hub_download(repo_id=repo, filename=name, local_dir='/content/hf'))
-            shutil.move(str(got), str(target))
-    if cached and not cached.is_file():
-        print('存一份到雲端硬碟', cached.name); shutil.copy(str(target), str(cached))
+    ensure_model(repo, name, target, cached)
     print(folder, target.name, f'{target.stat().st_size / 2**30:.1f} GiB')
 """),
     code("""#@title ⑤ 上傳人物照（一張）
@@ -415,6 +410,7 @@ INSTALL_IMAGE = True  #@param {type:"boolean"}
 INSTALL_Z_IMAGE_TURBO = False  #@param {type:"boolean"}
 from huggingface_hub import hf_hub_download
 import shutil, time
+""" + model_cache_src + """
 CACHE = None
 if USE_DRIVE_CACHE:
     from google.colab import drive
@@ -452,14 +448,7 @@ for repo, name, folder in files:
     target = COMFY / 'models' / folder / Path(name).name
     target.parent.mkdir(parents=True, exist_ok=True)
     cached = CACHE / Path(name).name if CACHE else None
-    if not target.is_file():
-        if cached and cached.is_file():
-            print('從雲端硬碟複製', cached.name); shutil.copy(str(cached), str(target))
-        else:
-            got = Path(hf_hub_download(repo_id=repo, filename=name, local_dir='/content/hf'))
-            shutil.move(str(got), str(target))
-    if cached and not cached.is_file():
-        print('存一份到雲端硬碟', cached.name); shutil.copy(str(target), str(cached))
+    ensure_model(repo, name, target, cached)
     print(f'{folder:<28} {target.name[:60]:<60} {target.stat().st_size / 2**30:5.1f} GiB')
 # 官方提示詞寫作指南（改寫模型照它寫）
 GUIDES = APP / 'guides'; GUIDES.mkdir(exist_ok=True)
