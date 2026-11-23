@@ -1,0 +1,53 @@
+import { PhCube, PhFilmStrip, PhImage, PhMusicNotes, PhTextT, PhUserFocus, PhMicrophone, PhTextAlignLeft } from '@phosphor-icons/vue'
+import { t } from './i18n'
+
+// Navigation and form routing share one registry. New families add an entry here.
+export const generationModes = [
+  { id: 't2v', family: 'video', group: 'VIDEO', label: 'Text to video', model: 'MiniMax-H3 / FastH3', icon: PhTextT },
+  { id: 'i2v', family: 'video', group: 'VIDEO', label: 'Animate frames', model: 'MiniMax-H3 / FastH3', icon: PhFilmStrip },
+  { id: 'r2v', family: 'video', group: 'VIDEO', label: 'Reference to video', model: 'FastH3 OmniRef', icon: PhUserFocus },
+  { id: 't2i', family: 'picture', imageModel: 'moss', group: 'IMAGE', label: 'MOSS-Image', model: 'MOSS-Image', hint: 'Generate', short: 'MO', icon: PhImage },
+  { id: 'flux-klein-4b', family: 'picture', imageModel: 'flux-klein-4b', group: 'IMAGE', label: 'FLUX.2 Klein 4B', model: '4-step · Generate & edit', hint: '4-step · Generate & edit', short: 'FL', icon: PhImage },
+  { id: 'qwen-image-21-turbo', family: 'picture', imageModel: 'qwen-image-21-turbo', group: 'IMAGE', label: 'Qwen Image 2.1', model: '8-step Turbo · Generate & edit', hint: '8-step Turbo · Generate & edit', short: 'QW', icon: PhImage },
+  { id: 't2m', family: 'music', group: 'AUDIO', label: 'Compose music', model: 'MiniMax Music 3', icon: PhMusicNotes },
+  { id: 'speech-qwen3_tts', family: 'speech', audioModel: 'qwen3_tts', group: 'SPEECH', label: 'Qwen3-TTS', model: '1.7B · Generate / clone / design', short: 'QT', icon: PhMicrophone },
+  { id: 'speech-voxcpm2', family: 'speech', audioModel: 'voxcpm2', group: 'SPEECH', label: 'VoxCPM2', model: 'Generate / clone / design', short: 'VX', icon: PhMicrophone },
+  { id: 'speech-omnivoice', family: 'speech', audioModel: 'omnivoice', group: 'SPEECH', label: 'OmniVoice', model: 'Multilingual · Generate / clone / design', short: 'OV', icon: PhMicrophone },
+  { id: 'asr-qwen3_asr', family: 'asr', audioModel: 'qwen3_asr', group: 'TRANSCRIBE', label: 'Qwen3-ASR', model: '1.7B · Aligned word timing', short: 'QA', icon: PhTextAlignLeft },
+  { id: 'i23d', family: 'mesh', group: '3D', label: 'Image to 3D', model: 'Pixal3D', icon: PhCube },
+]
+export function initialMode() {
+  try {
+    const saved = localStorage.getItem('h3.mode') || JSON.parse(localStorage.getItem('h3.form.v2'))?.mode
+    if (generationModes.some((m) => m.id === saved)) return saved
+    if (saved?.startsWith('asr-')) return 'asr-qwen3_asr'
+  } catch { /* storage unavailable */ }
+  return 't2v'
+}
+
+export const historyTypes = {
+  video: { kind: 'video', label: 'Videos', empty: 'Your generated videos and upscales will appear here.' },
+  picture: { kind: 'image', label: 'Pictures', empty: 'Your generated pictures will appear here.' },
+  music: { kind: 'music', label: 'Music', empty: 'Your generated songs will appear here.' },
+  speech: { kind: 'speech', label: 'Speech', empty: 'Your generated speech and voice clones will appear here.' },
+  asr: { kind: 'asr', label: 'Transcripts', empty: 'Your transcribed recordings will appear here.' },
+  mesh: { kind: '3d', label: '3D models', empty: 'Your generated 3D models will appear here.' },
+}
+
+export function imageMode(model = 'moss') {
+  return generationModes.find((m) => m.imageModel === model)?.id || 't2i'
+}
+// Labels are translated here, on every call, so callers' computeds follow a language switch.
+export function historyForMode(mode) {
+  const current = generationModes.find((m) => m.id === mode) || generationModes[0]
+  const base = historyTypes[current.family]
+  const history = { ...base, label: t(base.label), empty: t(base.empty) }
+  if (current.audioModel) return { ...history, audioModel: current.audioModel, label: t(current.family === 'speech' ? '{model} speech' : '{model} transcripts', { model: current.label }) }
+  return current.family === 'picture'
+    ? { ...history, imageModel: current.imageModel, label: t('{model} pictures', { model: current.label }) }
+    : history
+}
+
+export function audioMode(model, family = 'speech') {
+  return generationModes.find((m) => m.family === family && m.audioModel === model)?.id || `${family}-${family === 'speech' ? 'qwen3_tts' : 'qwen3_asr'}`
+}

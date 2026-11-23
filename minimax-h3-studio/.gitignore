@@ -1,0 +1,37 @@
+# Local settings (deploy target, paths)
+.env
+.env.*
+!.env.example
+
+web/node_modules/
+web/dist/
+outputs/
+data/
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vscode/
+
+# bench.sh artifacts
+comfy_launcher/out_*/
+comfy_launcher/*.log
+comfy_launcher/*.vram
+comfy_launcher/gpu.lock
+
+
+# Session handoff notes
+HANDOFF.md
+
+# Python lint/test caches and local coverage reports
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Optional native audio runtime and downloaded weights
+audio_cpp/
+*.gguf
+audio-v*-bin-*.tar.gz
+pika-lora

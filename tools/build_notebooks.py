@@ -4,6 +4,7 @@
   H3_Digital_Human.ipynb   數字人：基礎＋工作流＋上傳照片／貼提示詞／生成
   H3_Toybox.ipynb          H3 Toybox 網頁前端
   H3_JZL_Nodes.ipynb       基礎＋ ComfyUI-JZL-MiniMax-H3 短劇導演台完整工作流（本地 llama-server＋Qwen3.5-9B）
+  H3_Studio.ipynb          minimax-h3-studio（repo 內的 minimax-h3-studio/）：影片／圖片／音樂／語音／超分／3D 網頁工作室
 筆記本是產物，要改請改這支再重新產生。"""
 import json, io, os
 
@@ -12,6 +13,7 @@ os.chdir(ROOT)
 api = json.load(io.open('workflows/H3_digital_human_api.json', encoding='utf-8'))
 fix_src = io.open('tools/userdata_slash_fix.py', encoding='utf-8').read()
 model_cache_src = io.open('tools/model_cache.py', encoding='utf-8').read()
+studio_cache_src = io.open('tools/studio_model_cache.py', encoding='utf-8').read()
 ui_wf = io.open('workflows/H3_digital_human.json', encoding='utf-8').read()
 sample_prompt = api['7']['inputs']['prompt']
 api['7']['inputs']['prompt'] = ''
@@ -1108,11 +1110,339 @@ print('\\n'.join(l for l in log.splitlines() if any(k in l for k in keys))[-4000
 """),
 ]
 
+# ---------------------------------------------------------------- H3 Studio（minimax-h3-studio）
+# Studio 自己用 ComfyUI 當 Python 函式庫（不開 ComfyUI 服務）；server/app.py 直接在 Colab 背景跑，
+# 取代 deploy.sh 的 SSH＋systemd。模型清單直接讀 Studio 的 prepare_models.manifest()，Studio 加模型這裡自動跟上。
+STUDIO_NB = [
+    md("""# MiniMax-H3 Studio｜Colab 版（影片／圖片／音樂／語音／超分／3D 網頁工作室）
+
+[minimax-h3-studio](https://github.com/zxcHolmes/minimax-h3-studio) 的 Colab 部署：ComfyUI 只當 Python 函式庫在背景跑，**所有操作都在 Studio 網頁裡**。程式碼放在本 repo 的 `minimax-h3-studio/`。
+
+由上往下依序執行。**執行階段選 L4 或 A100 GPU**（T4 跑不動：int8 模型需要 compute capability 8.0 以上）。L4 的系統記憶體約 53 GB，長影片、4× 超分比較容易不夠；A100（約 83 GB）比較穩。
+
+| 步驟 | 做什麼 |
+|---|---|
+| ① 檢查＋安裝 | GPU／驅動不符就停下；通過才裝 ComfyUI（CUDA 13 版 PyTorch）、larryvrh 與 FlashVSR+ 節點、SageAttention、建置 Studio 網頁 |
+| ② 下載模型 | 核心約 38 GB，其餘功能可勾選（全勾約 175 GB）。預設用雲端硬碟「H3_models」快取，下次直接複製、不必重抓 |
+| ③ 啟動＋開網頁 | 背景啟動 Studio，等模型載好後用 Colab 內建代理開網頁 |
+| ③-b | 瀏覽器的 Google 帳號和 Colab 不同時，改用 cloudflare 網址 |
+| 📦 | 打包下載作品（作品只存在這台執行階段，關掉就消失） |
+
+**網頁裡能做的事**：文生影片、圖生影片（首格／首尾格）、參考生影片（最多 6 張圖＋3 支影片）、引導音訊（對嘴、MV）、圖片生成與編輯（MOSS-Image／FLUX.2 Klein／Qwen Image 2.1 Turbo）、MiniMax Music 3 音樂、Qwen3-TTS／VoxCPM2／OmniVoice 語音與 Qwen3-ASR 轉寫、RelayVSR／FlashVSR／SeedVR2 超分、Pixal3D 圖轉 3D。
+
+> ② 沒勾的功能在網頁裡仍看得到，但送出會因為找不到模型而失敗。沒勾「參考生影片」時，參考模式預設的 FastH3 OmniRef 不在；沒勾「FastH3 V2」時別選 FastH3 V2。
+
+**Hugging Face 權杖（建議）**：左側欄「🔑 密鑰」新增 `HF_TOKEN`（請用**唯讀**權杖），並開啟「筆記本存取權」。
+
+**雲端硬碟空間**：快取要預留跟勾選模型一樣多的空間（全勾約 175 GB）。
+
+授權依照各來源模型。最新版：<https://github.com/chaos-zhu/colab-test>"""),
+    code("""#@title ① 檢查環境＋安裝 ComfyUI 與 H3 Studio（GPU 或驅動不符就停下，不會安裝）
+#@markdown 想固定 ComfyUI 版本就填完整的 commit SHA（留空＝最新版；Studio 需要 `2f894332` 或更新）。
+COMFY_COMMIT = ''  #@param {type:"string"}
+import torch, shutil, subprocess, sys, os
+from pathlib import Path
+if not torch.cuda.is_available():
+    raise RuntimeError('沒有 GPU：請到「執行階段 → 變更執行階段類型」選 L4 或 A100 GPU，再重跑這格')
+cap = torch.cuda.get_device_capability(0)
+drv = subprocess.run(['nvidia-smi', '--query-gpu=driver_version', '--format=csv,noheader'], capture_output=True, text=True).stdout.strip()
+ram = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 2**30
+print('GPU:', torch.cuda.get_device_name(0), '| capability', cap, '| VRAM', round(torch.cuda.get_device_properties(0).total_memory / 2**30, 1), 'GiB')
+print('驅動:', drv, '| 系統記憶體', round(ram, 1), 'GiB | 可用磁碟', round(shutil.disk_usage('/content').free / 2**30, 1), 'GiB')
+if cap < (8, 0):
+    raise RuntimeError(f'這張卡（capability {cap}）跑不動 int8 模型，沒有安裝任何東西。請換 L4 或 A100 再重跑。')
+if int(drv.split('.')[0]) < 580:
+    raise RuntimeError(f'驅動 {drv} 不支援 CUDA 13（需要 580 以上），沒有安裝任何東西。請換一台執行階段再試。')
+if shutil.disk_usage('/content').free < 60 * 2**30:
+    raise RuntimeError('磁碟剩不到 60 GiB，放不下核心模型。請換一台執行階段。')
+if ram < 60:
+    print(f'⚠️ 系統記憶體只有 {ram:.0f} GiB：長影片、參考影片、4× 超分可能不夠；A100 比較穩')
+print('✅ 環境檢查通過，開始安裝')
+try:
+    from google.colab import userdata
+    os.environ['HF_TOKEN'] = userdata.get('HF_TOKEN'); print('已讀到 HF_TOKEN')
+except Exception:
+    print('沒有設定 HF_TOKEN，之後改用匿名下載（人多時可能被限速）')
+
+def clone(url, dest, commit=''):
+    dest = Path(dest)
+    if not dest.exists():
+        subprocess.run(['git', 'clone', '--depth', '1', url, str(dest)], check=True)
+    elif not commit:
+        subprocess.run(['git', '-C', str(dest), 'pull', '--ff-only'], check=False)
+    if commit:
+        subprocess.run(['git', '-C', str(dest), 'fetch', '--depth', '1', 'origin', commit], check=True)
+        subprocess.run(['git', '-C', str(dest), 'checkout', '--quiet', 'FETCH_HEAD'], check=True)
+
+def pip(*args):
+    subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', *args], check=True)
+
+COMFY = Path('/content/ComfyUI')
+clone('https://github.com/Comfy-Org/ComfyUI.git', COMFY, COMFY_COMMIT.strip())
+print('ComfyUI commit:', subprocess.run(['git', '-C', str(COMFY), 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip())
+if not (torch.version.cuda or '').startswith('13'):
+    print('安裝 CUDA 13 版 PyTorch（int8 ConvRot 權重與 comfy_kitchen 的 CUDA 後端需要）…')
+    pip('torch', 'torchvision', 'torchaudio', '--index-url', 'https://download.pytorch.org/whl/cu130')
+pip('-r', str(COMFY / 'requirements.txt'), 'huggingface_hub', 'hf_xet')
+# Studio 會用到的兩個自訂節點：larryvrh 4 步 Turbo LoRA、FlashVSR+ 超分（它的 requirements 不會動到 PyTorch）
+clone('https://github.com/larryvrh/ComfyUI-MiniMax-H3-Turbo', COMFY / 'custom_nodes' / 'ComfyUI-MiniMax-H3-Turbo')
+FLASHVSR = COMFY / 'custom_nodes' / 'Comfyui-Flashvsr-Plus-T8'
+clone('https://github.com/T8mars/Comfyui-Flashvsr-Plus-T8', FLASHVSR)
+pip('-r', str(FLASHVSR / 'requirements.txt'))
+# SageAttention 大約快一倍；裝不起來也能跑，③ 會自動拿掉 --use-sage-attention
+try:
+    pip('sageattention')
+except subprocess.CalledProcessError:
+    pass
+sage = subprocess.run([sys.executable, '-c', 'import sageattention'], capture_output=True).returncode == 0
+print('SageAttention:', '可用' if sage else '沒有（會慢一些）')
+# Studio 本體：本 repo 的 minimax-h3-studio/
+clone('https://github.com/chaos-zhu/colab-test.git', '/content/minimax-h3-colab')
+STUDIO = Path('/content/minimax-h3-colab/minimax-h3-studio')
+if not (STUDIO / 'server' / 'app.py').exists():
+    raise RuntimeError(f'找不到 {STUDIO}/server/app.py：repo 裡還沒有 minimax-h3-studio/')
+# 建置網頁（Vue 3＋Vite，需要 Node 18 以上）
+def node_major():
+    try:
+        return int(subprocess.run(['node', '--version'], capture_output=True, text=True).stdout.strip().lstrip('v').split('.')[0])
+    except Exception:
+        return 0
+if node_major() < 18:
+    print('安裝 Node.js 20…')
+    subprocess.run('curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null && apt-get install -y -qq nodejs > /dev/null', shell=True, check=True)
+WEB = STUDIO / 'web'
+subprocess.run(['npm', 'ci', '--no-audit', '--no-fund', '--loglevel=error'], cwd=str(WEB), check=True)
+subprocess.run(['npm', 'run', 'build', '--silent'], cwd=str(WEB), check=True)
+print('ffmpeg:', shutil.which('ffmpeg') or '沒有')
+out = subprocess.run([sys.executable, '-c', 'import torch;print(torch.__version__, torch.version.cuda, torch.cuda.is_available())'],
+                     capture_output=True, text=True)
+print('Studio 會用的 PyTorch：', out.stdout.strip(), out.stderr[-300:])
+print('✅ 安裝完成')
+"""),
+    code("""#@title ② 下載模型（雲端硬碟快取）
+#@markdown 預設啟用雲端硬碟快取：已有模型從「我的雲端硬碟/H3_models」複製（和本 repo 其他筆記本共用同名檔案），缺少的從 Hugging Face 下載後備份到雲端硬碟，下次直接用。首次使用需授權並預留雲端硬碟空間。
+USE_DRIVE_CACHE = True  #@param {type:"boolean"}
+#@markdown **核心（必裝，約 38 GB）**：Qwen3-VL 文字編碼器、影音 VAE、FL2VA 底模、larryvrh 4 步 LoRA → 文生影片、圖生影片。
+#@markdown 以下為加裝功能（磁碟放不下時會先停下並列出各組大小）：
+#@markdown 參考生影片：ref2va 底模＋FastH3 OmniRef（參考模式預設）＋Pika H3 Flex（約 43 GB）
+INCLUDE_REFERENCE = True  #@param {type:"boolean"}
+#@markdown FastH3 V2：FastVideo 蒸餾的 8 步文生／圖生底模（約 21 GB）
+INCLUDE_FASTH3_V2 = False  #@param {type:"boolean"}
+#@markdown 圖片生成與編輯：MOSS-Image、FLUX.2 Klein 4B、Qwen Image 2.1 Turbo（約 43 GB）
+INCLUDE_IMAGE = True  #@param {type:"boolean"}
+#@markdown 音樂：MiniMax Music 3（約 11 GB）
+INCLUDE_MUSIC = True  #@param {type:"boolean"}
+#@markdown 語音與轉寫：audio.cpp＋Qwen3-TTS／VoxCPM2／OmniVoice／Qwen3-ASR（約 15 GB）
+INCLUDE_SPEECH = True  #@param {type:"boolean"}
+#@markdown 影片超分：RelayVSR、FlashVSR、SeedVR2（約 16 GB）
+INCLUDE_UPSCALE = True  #@param {type:"boolean"}
+#@markdown 圖轉 3D：Pixal3D（約 9 GB）
+INCLUDE_3D = True  #@param {type:"boolean"}
+import sys, os, time, shutil, urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from huggingface_hub import hf_hub_download, hf_hub_url, get_hf_file_metadata
+""" + model_cache_src + studio_cache_src + """
+COMFY = Path('/content/ComfyUI')
+STUDIO = Path('/content/minimax-h3-colab/minimax-h3-studio')
+MODELS, AUDIO_ROOT = COMFY / 'models', COMFY.parent / 'audio_cpp'   # Studio 預設：audio_cpp/ 在 ComfyUI 旁邊
+for p in (STUDIO / 'scripts', STUDIO / 'server'):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+import prepare_models, prepare_audio_runtime, model_download
+
+def wanted(group, family):
+    if group in ('shared', 'fl2va', 'larryvrh'):
+        return True
+    if group == 'fasth3':
+        return INCLUDE_REFERENCE if family == 'ref2va' else INCLUDE_FASTH3_V2
+    if group in prepare_models.AUDIO_GROUPS:
+        return INCLUDE_SPEECH
+    return {'ref2va': INCLUDE_REFERENCE, 'pika': INCLUDE_REFERENCE, 'image': INCLUDE_IMAGE, 'klein': INCLUDE_IMAGE,
+            'qwen-image': INCLUDE_IMAGE, 'music': INCLUDE_MUSIC, 'upscale': INCLUDE_UPSCALE, 'flashvsr': INCLUDE_UPSCALE,
+            'relayvsr': INCLUDE_UPSCALE, 'pixal3d': INCLUDE_3D}[group]
+
+CACHE = None
+if USE_DRIVE_CACHE:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    CACHE = Path('/content/drive/MyDrive/H3_models'); CACHE.mkdir(parents=True, exist_ok=True)
+# 一般 ComfyUI 模型在雲端硬碟平鋪（跟其他筆記本共用）；FlashVSR、audio.cpp 有同名風險，保留子資料夾
+FLAT = {'diffusion_models', 'text_encoders', 'vae', 'loras', 'clip_vision', 'geometry_estimation', 'background_removal'}
+def paths(group, sub, name, family):
+    if family == 'audio':
+        rel = (Path() if group == 'audio-runtime' else Path('models')) / sub / name
+        return AUDIO_ROOT / rel, (CACHE / 'audio_cpp' / rel if CACHE else None)
+    return MODELS / sub / name, (None if not CACHE else CACHE / name if sub in FLAT else CACHE / sub / name)
+
+def remote_size(item):
+    group, repo, path, sub, name, family = item
+    try:
+        if repo.startswith('https://'):
+            with urllib.request.urlopen(urllib.request.Request(repo, method='HEAD'), timeout=30) as r:
+                return int(r.headers.get('Content-Length') or 0) or None
+        return get_hf_file_metadata(hf_hub_url(repo, path)).size
+    except Exception as e:
+        print('  查不到大小：', name, e)
+        return None
+
+items = [it for it in prepare_models.manifest() if wanted(it[0], it[5])]
+with ThreadPoolExecutor(16) as pool:
+    sizes = list(pool.map(remote_size, items))
+by_group, missing = {}, 0
+for (group, repo, path, sub, name, family), size in zip(items, sizes):
+    by_group[group] = by_group.get(group, 0) + (size or 0)
+    if not file_ok(paths(group, sub, name, family)[0], size):
+        missing += size or 0
+print('要準備的模型：', '  '.join(f'{g} {s / 2**30:.1f}G' for g, s in by_group.items()))
+free = shutil.disk_usage('/content').free
+print(f'共 {sum(by_group.values()) / 2**30:.0f} GiB，這台還缺 {missing / 2**30:.0f} GiB；磁碟可用 {free / 2**30:.0f} GiB')
+if missing + 8 * 2**30 > free:
+    raise RuntimeError('磁碟放不下：取消勾選一些功能再重跑這格（上面列了各組大小）')
+
+t0, failed = time.time(), []
+for i, ((group, repo, path, sub, name, family), size) in enumerate(zip(items, sizes), 1):
+    dest, cached = paths(group, sub, name, family)
+    try:
+        if file_ok(dest, size):
+            source = '本機已有'
+        elif cached and file_ok(cached, size):
+            copy_file(cached, dest, size); source = '雲端硬碟'
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            print(f'  下載 {name}', flush=True)
+            sha = prepare_models.CHECKSUMS.get(name)
+            if repo.startswith('https://'):
+                model_download.download(repo, dest, sha)
+            else:
+                got = Path(hf_hub_download(repo_id=repo, filename=path, local_dir='/content/hf'))
+                model_download.verify_checksum(got, sha)
+                os.replace(got, dest)
+            if not file_ok(dest, size):
+                raise RuntimeError('下載的檔案不完整')
+            source = 'Hugging Face'
+        if cached and not file_ok(cached, size):
+            print('  備份到雲端硬碟', flush=True)
+            copy_file(dest, cached, size)
+        print(f'[{i}/{len(items)}] ✅ {group:<13} {sub}/{name}  {dest.stat().st_size / 2**30:.1f} GiB（{source}）', flush=True)
+    except Exception as e:
+        print(f'[{i}/{len(items)}] ❌ {sub}/{name}：{e}', flush=True)
+        failed.append(name)
+if failed:
+    raise RuntimeError(f'{len(failed)} 個檔案沒準備好：{", ".join(failed)}；重跑這格會接著處理')
+if INCLUDE_SPEECH:
+    prepare_audio_runtime.install_runtime(AUDIO_ROOT)
+print(f'✅ 模型準備完成，{(time.time() - t0) / 60:.1f} 分鐘')
+"""),
+    code("""#@title ③ 啟動 H3 Studio（背景）＋開網頁
+# 執行後下面會出現一個連結；顯示成 localhost 也沒關係，直接點它就會開新分頁。
+# ⚠️ 開分頁的瀏覽器必須登入「跟這本 Colab 同一個 Google 帳號」；帳號不同就改用下一格 ③-b。
+# 第一次啟動要載入文字編碼器與 VAE，約需幾分鐘。
+import subprocess, sys, os, time, json, urllib.request
+from pathlib import Path
+COMFY = Path('/content/ComfyUI')
+STUDIO = Path('/content/minimax-h3-colab/minimax-h3-studio')
+DATA = Path('/content/h3studio_data')   # 生成紀錄與作品：只存在這台執行階段，關掉就消失（用 📦 打包下載）
+LOG = '/content/h3studio.log'
+if not (STUDIO / 'web' / 'dist' / 'index.html').exists():
+    raise RuntimeError('網頁還沒建置：先跑 ①')
+if 'studio' in globals() and studio.poll() is None:
+    studio.terminate()
+    try:
+        studio.wait(30)
+    except subprocess.TimeoutExpired:
+        studio.kill(); studio.wait()
+    print('已關閉舊的 H3 Studio，重新啟動')
+sage = subprocess.run([sys.executable, '-c', 'import sageattention'], capture_output=True).returncode == 0
+comfy_args = '--enable-triton-backend' + (' --use-sage-attention' if sage else '')
+env = dict(os.environ, PYTHONUNBUFFERED='1', H3_COMFYUI=str(COMFY), H3_DATA=str(DATA),
+           H3_WEB_DIST=str(STUDIO / 'web' / 'dist'), H3_HOST='127.0.0.1', H3_PORT='8190',
+           H3_COMFY_ARGS=comfy_args, H3_AUDIOCPP_THREADS=str(os.cpu_count() or 8))
+for k in ('H3_STRATA_DIR', 'H3_STRATA_CONFIG'):   # Colab 不跑 Strata：LLM 批次工作會被拒絕
+    env.pop(k, None)
+print('ComfyUI 參數：', comfy_args)
+studio = subprocess.Popen([sys.executable, 'app.py'], cwd=str(STUDIO / 'server'), env=env,
+                          stdout=open(LOG, 'w'), stderr=subprocess.STDOUT)
+
+def tail(n=3000):
+    return open(LOG, encoding='utf-8', errors='ignore').read()[-n:]
+
+state, t0 = None, time.time()
+while True:
+    if studio.poll() is not None:
+        print(tail()); raise RuntimeError('H3 Studio 結束了，看上面的紀錄')
+    try:
+        h = json.loads(urllib.request.urlopen('http://127.0.0.1:8190/api/health', timeout=3).read())
+    except Exception:
+        h = {'state': 'starting'}
+    if h['state'] != state:
+        state = h['state']; print(f'{time.time() - t0:5.0f}s  {state}', flush=True)
+    if state == 'ready':
+        break
+    if state == 'error':
+        print(tail()); raise RuntimeError('模型載入失敗：' + str(h.get('load_error')))
+    if time.time() - t0 > 1800:
+        print(tail()); raise RuntimeError('等了 30 分鐘還沒準備好，看上面的紀錄')
+    time.sleep(3)
+print('📁 作品存放位置：', DATA)
+from google.colab import output
+output.serve_kernel_port_as_window(8190, anchor_text='🎬 打開 H3 Studio')
+"""),
+    code("""#@title ③-b（備援）用 cloudflare 網址開 H3 Studio：瀏覽器登入的 Google 帳號和 Colab 不同時用這格
+# ⚠️ 網址沒有密碼，拿到的人都能用你的 GPU —— 不要貼到公開的地方。
+import subprocess, re, time
+from pathlib import Path
+if not Path('/content/cloudflared').exists():
+    subprocess.run(['wget', '-q', '-O', '/content/cloudflared',
+                    'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64'], check=True)
+    subprocess.run(['chmod', '+x', '/content/cloudflared'], check=True)
+# 通道的輸出寫進檔案，不要接 PIPE：PIPE 沒人讀會塞滿，通道就卡住
+if 'tun' in globals() and tun.poll() is None:
+    tun.terminate(); tun.wait()
+open('/content/cloudflared.log', 'w').close()
+tun = subprocess.Popen(['/content/cloudflared', 'tunnel', '--no-autoupdate', '--url', 'http://127.0.0.1:8190'],
+                       stdout=open('/content/cloudflared.log', 'a'), stderr=subprocess.STDOUT)
+url = None
+for i in range(60):
+    time.sleep(1)
+    m = re.search(r'https://[a-z0-9-]+\\.trycloudflare\\.com', open('/content/cloudflared.log').read())
+    if m:
+        url = m.group(0); break
+print('👉 H3 Studio：', url or '（沒拿到網址，看 /content/cloudflared.log）')
+"""),
+    code("""#@title 📦 打包下載作品（影片、圖片、音樂、語音、轉寫、3D 模型與生成紀錄）
+import shutil, time
+from pathlib import Path
+from google.colab import files
+DATA = Path('/content/h3studio_data')
+if not DATA.exists():
+    raise RuntimeError('還沒有作品：先跑 ③ 並生成一些東西')
+zip_path = shutil.make_archive(f'/content/h3studio_{time.strftime("%Y%m%d_%H%M%S")}', 'zip', str(DATA))
+print(f'{zip_path}  {Path(zip_path).stat().st_size / 2**20:.1f} MB')
+files.download(zip_path)
+"""),
+    code("""#@title 🔍 出問題時跑這格：看 GPU、記憶體、Studio 狀態與紀錄
+import subprocess, json, urllib.request
+print(subprocess.run(['nvidia-smi'], capture_output=True, text=True).stdout)
+print(subprocess.run(['free', '-g'], capture_output=True, text=True).stdout)
+try:
+    print(json.dumps(json.loads(urllib.request.urlopen('http://127.0.0.1:8190/api/health', timeout=5).read()), indent=1, ensure_ascii=False)[:3000])
+except Exception as e:
+    print('Studio 沒有回應：', e)
+log = open('/content/h3studio.log', encoding='utf-8', errors='ignore').read()
+keys = ('ERROR', 'Error', 'Traceback', 'out of memory', 'backend cuda', 'WARNING', 'failed')
+print('\\n'.join(l for l in log.splitlines() if any(k in l for k in keys))[-4000:])
+print('---- 最後 40 行 ----')
+print('\\n'.join(log.splitlines()[-40:]))
+"""),
+]
+
 NOTEBOOKS = {
     'H3_Digital_Human.ipynb': cells,
     'H3_Basic_ComfyUI.ipynb': [HEAD_BASIC, cells[1], C2_BASIC, C3_BASIC, cells[4], cells[5], cells[9]],
     'H3_Toybox.ipynb': TOYBOX,
     'H3_JZL_Nodes.ipynb': JZL,
+    'H3_Studio.ipynb': STUDIO_NB,
 }
 for fname, cs in NOTEBOOKS.items():
     nb = {'cells': cs,

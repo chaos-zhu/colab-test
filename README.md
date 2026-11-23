@@ -8,6 +8,7 @@
 | **H3_Basic_ComfyUI** | 基礎學習：裝好 ComfyUI＋H3 模型組，**不帶工作流**，自己拉節點 | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Basic_ComfyUI.ipynb) |
 | **H3_Digital_Human** | 數字人：一張人物照＋一段提示詞 → 會說話的影片；也可以交給桌面版 AI 用 skill 生成 | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Digital_Human.ipynb) |
 | **H3_Toybox** 🧸 | 可愛的網頁前端：參考生成／頭尾格／純文字／延伸影片＋提示詞改寫與剩餘時間；🖼 **選用的圖片分頁**（P-H3-Image 掛在同一顆 H3 上：文生圖、最多 8 張圖編輯，多約 10 GB）；🤖 短片 Agent（Gemini）。只開網頁，不用碰 ComfyUI 介面（約 50 GB 模型，加生圖約 60 GB） | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Toybox.ipynb) |
+| **H3_Studio** 🎬 | [minimax-h3-studio](https://github.com/zxcHolmes/minimax-h3-studio) 網頁工作室：文生／圖生／參考生影片、圖片生成與編輯、音樂、語音與轉寫、影片超分、圖轉 3D，全在一個網頁裡；功能可勾選，模型快取到雲端硬碟（核心約 38 GB，全勾約 175 GB） | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_Studio.ipynb) |
 | **H3_JZL_Nodes** | 基礎版＋ [ComfyUI-JZL-MiniMax-H3](https://github.com/wjluoxiao/ComfyUI-JZL-MiniMax-H3) 節點包（參考編碼、短劇導演台、人物替換…）：開箱即用的**短劇導演台**完整工作流：一段故事＋可選角色圖 → 本地 LLM（llama-server＋Qwen3.5-9B）拆分鏡 → 逐段生成 → 拼接成片；也可上傳自己的工作流自動檢查缺少的節點／模型（約 43 GB 模型） | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/chaos-zhu/colab-test/blob/main/H3_JZL_Nodes.ipynb) |
 
 > 一律從上面的按鈕開啟：筆記本改版只要更新這個 repo，按鈕永遠開到最新版，不必再傳新的分享網址。
@@ -115,6 +116,17 @@ ComfyUI 確認正常之後才下載，避免裝壞了還白抓 37 GB。
 - ⑥ 上傳自己的工作流 JSON：介面格式放進左側清單，並列出缺少的節點與模型。
 - ⑦ 上傳素材（檔名 `角色_名字.png` 會自動帶入類型與名稱）→ ⑧ 表單填故事、風格、畫幅、每段時長、段數、LLM（本地／線上 API）→ ⑨ 送出，顯示即時日誌，完成後播放並下載拼接成片。
 
+## H3 Studio：`H3_Studio.ipynb`
+
+[minimax-h3-studio](https://github.com/zxcHolmes/minimax-h3-studio) 的 Colab 版，程式放在本 repo 的 `minimax-h3-studio/`。Studio 把 ComfyUI 當 Python 函式庫用（不開 ComfyUI 服務），原本靠 `deploy.sh`＋SSH＋systemd 部署；筆記本改成在背景直接跑 `server/app.py`。
+
+- 執行階段選 **L4 或 A100**。L4 的系統記憶體約 53 GB，長影片、參考影片、4× 超分比較容易不夠。
+- ① 裝 CUDA 13 版 PyTorch（comfy_kitchen 官方 wheel 的 CUDA 後端可直接用，不必照 Studio README 自己編譯或改 `quant_ops.py`）、larryvrh Turbo 與 FlashVSR+ 節點、SageAttention（裝不起來會自動拿掉 `--use-sage-attention`），並用 Node 建置網頁。
+- ② 檔案清單直接讀 Studio 的 `scripts/prepare_models.py`（`manifest()`），Studio 新增模型時筆記本自動跟上。核心（文字編碼器、VAE、FL2VA 底模、larryvrh LoRA）約 38 GB 必裝；參考生影片 43、FastH3 V2 21（預設不勾）、圖片 43、音樂 11、語音 15、超分 16、3D 9 GB 可勾選。先查各檔大小，磁碟不夠就停下。
+- 雲端硬碟快取沿用「我的雲端硬碟/H3_models」：一般模型平鋪（文字編碼器、VAE 跟其他筆記本共用），FlashVSR 放 `flashvsr_plus/`、audio.cpp 放 `audio_cpp/`。safetensors 檢查檔頭與大小，其他檔比對 Hugging Face 上的大小；新下載的有 SHA256 就驗證。
+- ③ 啟動後輪詢 `/api/health` 到 `ready` 才開網頁；作品存在 `/content/h3studio_data`，關掉執行階段就消失，用 📦 打包下載。Colab 不跑 Strata，LLM 批次工作會被拒絕。
+- ② 沒勾的功能在網頁裡仍看得到，但送出會因找不到模型而失敗。
+
 ---
 
 ## 模型
@@ -139,7 +151,7 @@ ComfyUI 確認正常之後才下載，避免裝壞了還白抓 37 GB。
 
 ## 給維護者
 
-四本筆記本由 `tools/build_notebooks.py` 產生，**不要直接改 ipynb**：
+五本筆記本由 `tools/build_notebooks.py` 產生，**不要直接改 ipynb**：
 
 ```bash
 python tools/build_notebooks.py
