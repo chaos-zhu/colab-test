@@ -7,6 +7,10 @@ RUNTIME_URL = (
 )
 RUNTIME_SHA256 = "5be3e8d515fb244387de87958668ebb729d9442de6a53df12e4c718ea918419d"
 
+# The GGUF repo replaces files in place (2026-11-20: a new Qwen3 ForcedAligner build), so downloads use the
+# last commit whose files match the checksums below, all verified against the v0.9.3 runtime.
+HF_REVISIONS = {"audio-cpp/audio.cpp-gguf": "32c1ce1fea57a513eb9386aa62408d47b1cf7ab2"}
+
 # From the v0.9.3 model_specs packages; embedded GGUF includes tokenizers/codecs.
 AUDIO_WEIGHTS = {
     "qwen3_tts_1_7b_base_q8_0": {

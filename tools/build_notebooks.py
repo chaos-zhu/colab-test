@@ -1281,7 +1281,7 @@ def remote_size(item):
         if repo.startswith('https://'):
             with urllib.request.urlopen(urllib.request.Request(repo, method='HEAD'), timeout=30) as r:
                 return int(r.headers.get('Content-Length') or 0) or None
-        return get_hf_file_metadata(hf_hub_url(repo, path)).size
+        return get_hf_file_metadata(hf_hub_url(repo, path, revision=prepare_models.HF_REVISIONS.get(repo))).size
     except Exception as e:
         print('  查不到大小：', name, e)
         return None
@@ -1315,7 +1315,8 @@ for i, ((group, repo, path, sub, name, family), size) in enumerate(zip(items, si
             if repo.startswith('https://'):
                 model_download.download(repo, dest, sha)
             else:
-                got = Path(hf_hub_download(repo_id=repo, filename=path, local_dir='/content/hf'))
+                got = Path(hf_hub_download(repo_id=repo, filename=path, revision=prepare_models.HF_REVISIONS.get(repo),
+                                           local_dir='/content/hf'))
                 model_download.verify_checksum(got, sha)
                 os.replace(got, dest)
             if not file_ok(dest, size):

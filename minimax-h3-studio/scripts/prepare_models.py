@@ -53,7 +53,7 @@ from model_catalog import (  # noqa: E402
 )
 
 from image_models import IMAGE_FILES, IMAGE_CHECKSUMS
-from audio_catalog import AUDIO_GROUPS, AUDIO_CHECKSUMS, audio_manifest
+from audio_catalog import AUDIO_GROUPS, AUDIO_CHECKSUMS, HF_REVISIONS, audio_manifest
 from model_download import download, verify_checksum
 from prepare_audio_runtime import install_runtime
 
@@ -252,7 +252,7 @@ def main():
             print(f"[{i}/{len(items)}] fetch   {sub}/{name}  ({repo})")
             dest.parent.mkdir(parents=True, exist_ok=True)
             download(
-                (repo if repo.startswith("https://") else f"{endpoint}/{repo}/resolve/main/{path}"),
+                (repo if repo.startswith("https://") else f"{endpoint}/{repo}/resolve/{HF_REVISIONS.get(repo, 'main')}/{path}"),
                 dest,
                 CHECKSUMS.get(name),
                 args.connections,
